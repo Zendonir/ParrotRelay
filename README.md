@@ -1,57 +1,57 @@
 # ParrotRelay
 
-Ein transparenter Start-Proxy für [TeknoParrot](https://github.com/teknogods/TeknoParrotUI), gedacht für den Einsatz mit **HyperSpin 2 / HyperHQ**.
+A transparent launch proxy for [TeknoParrot](https://github.com/teknogods/TeknoParrotUI), built for use with **HyperSpin 2 / HyperHQ**.
 
-![ParrotRelay Ladebildschirm](screenshot.png)
+![ParrotRelay loading screen](screenshot.png)
 
-## Warum
+## Why
 
-TeknoParrot-Spiele, die über HyperHQ gestartet werden, verlieren teils nach dem Start ihren exklusiven Vollbildmodus: `TeknoParrotUi.exe` holt sein eigenes "Spiel läuft"-Fenster selbst wieder in den Vordergrund, während das Spiel im Hintergrund weiterläuft — mit dem Effekt, dass man auf das TP-Fenster statt aufs Spiel schaut, und ein Zurückklicken den Vollbildmodus nicht mehr sauber herstellt.
+TeknoParrot games launched through HyperHQ sometimes lose their exclusive fullscreen mode shortly after starting: `TeknoParrotUi.exe` brings its own "Game is running" window back to the foreground itself, while the actual game keeps running behind it. The result is that you end up looking at TP's window instead of the game, and clicking back on it no longer restores fullscreen properly.
 
-ParrotRelay setzt sich zwischen HyperHQ und TeknoParrotUi.exe und behebt das, ohne TeknoParrot selbst anzufassen.
+ParrotRelay sits between HyperHQ and TeknoParrotUi.exe and fixes this without touching TeknoParrot itself.
 
-## Was es macht
+## What it does
 
-1. **Eigener Vollbild-Ladebildschirm** — zeigt den echten Spielnamen (aus der TeknoParrot-Profil-XML) und optional ein spielspezifisches Hintergrundbild, solange geladen wird. Schließt sich automatisch, sobald das echte Spielfenster da ist.
-2. **Unterdrückt TeknoParrots eigenes "Spiel läuft"-Fenster** aktiv, bevor es überhaupt Fokus bekommen kann.
-3. **Hält als Sicherheitsnetz kontinuierlich den Fokus** auf dem echten Spielfenster, falls doch mal etwas anderes kurz in den Vordergrund kommt.
-4. **Bleibt am Leben, bis das Spiel wirklich beendet ist** — nicht nur bis TeknoParrots eigener Launcher-Stub sich (wie designed) selbst beendet. Sonst würde HyperHQ fälschlich "Spiel beendet" melden.
+1. **Its own fullscreen loading screen** — shows the real game name (read from TeknoParrot's profile XML) and, optionally, a game-specific background image while the game loads. Closes automatically as soon as the real game window appears.
+2. **Actively suppresses TeknoParrot's own "Game is running" window**, before it can ever take focus.
+3. **Continuously keeps focus on the real game window** as a safety net, in case something else briefly steals the foreground.
+4. **Stays alive until the game itself actually closes** — not just until TeknoParrot's own launcher stub exits (which it does by design shortly after launching the game). Otherwise HyperHQ would wrongly report "game closed" while the game is still running.
 
 ## Installation
 
-1. [Releases](../../releases) öffnen, `ParrotRelay.exe` herunterladen.
-2. Direkt neben `TeknoParrotUi.exe` legen (z. B. `D:\ROM\TeknoParrot\ParrotRelay.exe`).
-3. In HyperSpin 2 die TeknoParrot-Plattform bearbeiten:
+1. Open [Releases](../../releases) and download `ParrotRelay.exe`.
+2. Place it right next to `TeknoParrotUi.exe` (e.g. `D:\ROM\TeknoParrot\ParrotRelay.exe`).
+3. In HyperSpin 2, edit the TeknoParrot platform:
    - **Platform Path:** `D:\ROM\TeknoParrot\ParrotRelay.exe`
-   - **Command Line:** bleibt unverändert, z. B. `--startMinimized --profile=%rom.filename%.xml`
+   - **Command Line:** leave unchanged, e.g. `--startMinimized --profile=%rom.filename%.xml`
 
-Kein Admin-Rechte-Setup nötig.
+No admin rights setup required.
 
-## Hintergrundbilder (optional)
+## Background images (optional)
 
-Ordner `LoadingBG` neben `ParrotRelay.exe` anlegen:
+Create a `LoadingBG` folder next to `ParrotRelay.exe`:
 
 ```
 D:\ROM\TeknoParrot\LoadingBG\BBCF.png
 ```
 
-Der Dateiname (ohne Endung) muss exakt dem Profilnamen aus `--profile=<Name>.xml` entsprechen. Unterstützt: `.png`, `.gif` nativ; `.jpg`/`.jpeg`/`.bmp`/`.webp` zusätzlich, falls [Pillow](https://pypi.org/project/Pillow/) installiert ist.
+The filename (without extension) must exactly match the profile name from `--profile=<name>.xml`. Supported: `.png`, `.gif` natively; `.jpg`/`.jpeg`/`.bmp`/`.webp` additionally if [Pillow](https://pypi.org/project/Pillow/) is installed.
 
-Ohne eigenes Bild fällt ParrotRelay automatisch auf TeknoParrots eigenes Icon zurück (`Icons\<Profil>.png`), falls vorhanden.
+If no custom image is found, ParrotRelay automatically falls back to TeknoParrot's own icon (`Icons\<profile>.png`), if present.
 
-## Aus dem Quellcode bauen
+## Building from source
 
 ```bash
 pip install -r requirements.txt
 pyinstaller --onefile --noconsole --icon=icon.ico --name ParrotRelay parrot_relay.py
 ```
 
-Die fertige `ParrotRelay.exe` liegt danach in `dist\`.
+The finished `ParrotRelay.exe` will be in `dist\`.
 
 ## Logging
 
-`parrot_relay_log.txt` wird im selben Ordner wie die exe angelegt und bei jedem Start ergänzt — nützlich zum Debuggen, welches Fenster wann erkannt/unterdrückt/fokussiert wurde.
+`parrot_relay_log.txt` is created next to the exe and appended to on every run — useful for debugging which window was detected/suppressed/focused and when.
 
-## Lizenz
+## License
 
-MIT — siehe [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
