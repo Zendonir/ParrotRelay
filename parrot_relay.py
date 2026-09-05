@@ -1,77 +1,76 @@
 r"""
-ParrotRelay - Transparenter Start-Proxy fuer TeknoParrotUi.exe
+ParrotRelay - Transparent launch proxy for TeknoParrotUi.exe
 
-Zweck:
-    Liegt NEBEN TeknoParrotUi.exe im selben Ordner. Wird von HyperSpin 2
-    anstelle von TeknoParrotUi.exe aufgerufen, reicht alle Kommandozeilen-
-    Argumente 1:1 an TeknoParrotUi.exe weiter (gleiches Arbeitsverzeichnis,
-    also keine Pfadprobleme mehr) und:
+Purpose:
+    Lives NEXT TO TeknoParrotUi.exe in the same folder. Called by
+    HyperSpin 2 instead of TeknoParrotUi.exe directly, forwards all
+    command-line arguments 1:1 to TeknoParrotUi.exe (same working
+    directory, so no more path issues) and:
 
-    1. Zeigt einen eigenen Vollbild-Ladebildschirm (Ersatz fuer
-       HyperOverlays Loading-Screen, der sich als Ursache des
-       urspruenglichen Fokus-Problems herausgestellt hat) mit dem
-       echten Spielnamen (aus der UserProfiles-XML, GameNameInternal)
-       und optional einem spielspezifischen Hintergrundbild aus dem
-       LoadingBG-Ordner, solange noch kein echtes Spielfenster
-       existiert. Schliesst sich automatisch, sobald das Spielfenster
-       gefunden wurde.
-    2. TeknoParrots eigene Fenster (Hauptfenster, "Spiel laeuft") aktiv
-       versteckt, SOBALD sie sichtbar werden - noch bevor sie ueberhaupt
-       Fokus/Vordergrund bekommen koennen. Das ist der Kernfix: bei
-       exklusivem Vollbild (z.B. BlazBlue) reicht ein einziger Fokus-
-       wechsel weg vom Spiel, damit es den Vollbildmodus verliert -
-       nachtraegliches Zurueckfokussieren kommt dann zu spaet.
-    3. Zusaetzlich als Sicherheitsnetz kontinuierlich das echte Spiel-
-       fenster fokussiert, falls trotzdem mal ein fremdes Fenster
-       (HyperOverlay o.ae.) kurz in den Vordergrund kommt.
-    4. Am Leben bleibt, bis das TATSAECHLICHE Spiel beendet ist - nicht
-       nur bis TeknoParrotUi.exe (ein reiner Launcher-Stub, der sich
-       nach dem Start des Spiels selbst beendet) verschwindet. Sonst
-       wuerde HyperHQ (das ja diesen Proxy als "den Emulator"
-       ueberwacht) faelschlich "Spiel beendet" melden, sobald nur der
-       TP-Launcher-Stub weg ist, obwohl das Spiel noch laeuft.
+    1. Shows its own fullscreen loading screen (replacement for
+       HyperOverlay's loading screen, which turned out to be the
+       cause of the original focus problem) with the real game name
+       (from the UserProfiles XML, GameNameInternal) and optionally a
+       game-specific background image from the LoadingBG folder,
+       while no real game window exists yet. Closes automatically
+       once the game window is found.
+    2. Actively hides TeknoParrot's own windows (main window, "Game is
+       running") AS SOON AS they become visible - before they can
+       ever take focus/foreground. This is the core fix: with
+       exclusive fullscreen (e.g. BlazBlue), a single focus change
+       away from the game is enough for it to drop out of fullscreen
+       - refocusing afterwards is already too late.
+    3. Additionally, as a safety net, continuously focuses the real
+       game window in case some other window (HyperOverlay etc.)
+       briefly comes to the foreground.
+    4. Stays alive until the ACTUAL game has closed - not just until
+       TeknoParrotUi.exe (a pure launcher stub that exits by itself
+       shortly after starting the game) disappears. Otherwise HyperHQ
+       (which watches this proxy as "the emulator") would wrongly
+       report "game closed" as soon as the TP launcher stub is gone,
+       even though the game is still running.
 
-Voraussetzungen:
+Requirements:
     pip install pywin32 psutil
-    (tkinter ist Teil der Python-Standardbibliothek, keine extra
-    Installation noetig. Fuer Hintergrundbilder in Formaten ausser
-    PNG/GIF zusaetzlich: pip install pillow)
+    (tkinter is part of the Python standard library, no extra
+    install needed. For background images in formats other than
+    PNG/GIF, additionally: pip install pillow)
 
-Hintergrundbilder (optional):
-    Ordner "LoadingBG" NEBEN ParrotRelay.exe anlegen, z.B.
+Background images (optional):
+    Create a "LoadingBG" folder NEXT TO ParrotRelay.exe, e.g.
     D:\ROM\TeknoParrot\LoadingBG\BBCF.png
-    Der Dateiname (ohne Endung) muss exakt dem --profile=<Name>.xml
-    aus der Kommandozeile entsprechen. Unterstuetzte Endungen:
-    .png, .gif nativ; .jpg/.jpeg/.bmp/.webp zusaetzlich falls Pillow
-    installiert ist. Kein Bild gefunden -> einfacher schwarzer
-    Hintergrund wie bisher.
+    The filename (without extension) must exactly match the
+    --profile=<name>.xml from the command line. Supported
+    extensions: .png, .gif natively; .jpg/.jpeg/.bmp/.webp
+    additionally if Pillow is installed. No image found -> plain
+    black background as before.
 
-Spielname:
-    Wird aus D:\ROM\TeknoParrot\UserProfiles\<Profil>.xml gelesen
-    (Feld GameNameInternal, z.B. "BlazBlue: Central Fiction"). Falls
-    die Datei fehlt oder das Feld nicht gefunden wird, faellt der
-    Splash auf den rohen Profil-Dateinamen zurueck (z.B. "BBCF").
+Game name:
+    Read from D:\ROM\TeknoParrot\UserProfiles\<profile>.xml (field
+    GameNameInternal, e.g. "BlazBlue: Central Fiction"). If the file
+    is missing or the field isn't found, the splash falls back to
+    the raw profile filename (e.g. "BBCF").
 
-Build (als EXE, OHNE Admin-Anforderung - siehe Hinweis unten):
+Build (as EXE, WITHOUT admin requirement - see note below):
     pyinstaller --onefile --noconsole --icon=icon.ico --name ParrotRelay parrot_relay.py
 
-Hinweis Admin-Rechte: TeknoParrotUi.exe selbst startet auch ohne
-Admin-Elevation des Proxys problemlos, und HyperHQ (nicht elevated)
-kann einen elevated Proxy per spawn() ohnehin nicht starten (Windows
-verweigert das mit EACCES). Deshalb bewusst KEIN --uac-admin.
+Note on admin rights: TeknoParrotUi.exe itself starts fine without
+elevating the proxy, and HyperHQ (not elevated) can't spawn an
+elevated proxy via spawn() anyway (Windows refuses with EACCES).
+That's why --uac-admin is deliberately NOT used.
 
-Die fertige ParrotRelay.exe aus dist\ nach D:\ROM\TeknoParrot\ kopieren
-(also direkt neben TeknoParrotUi.exe).
+Copy the finished ParrotRelay.exe from dist\ to D:\ROM\TeknoParrot\
+(i.e. right next to TeknoParrotUi.exe).
 
-HyperSpin-2-Konfiguration:
+HyperSpin 2 configuration:
     Platform Path: D:\ROM\TeknoParrot\ParrotRelay.exe
     Command Line:  --startMinimized --profile=%rom.filename%.xml
-    (unveraendert - der Proxy reicht das 1:1 durch)
+    (unchanged - the proxy passes it through 1:1)
 
 Log:
-    parrot_relay_log.txt wird im selben Ordner wie die exe angelegt und bei
-    jedem Start ergaenzt (nicht ueberschrieben), damit man mehrere Laeufe
-    im Nachhinein vergleichen kann.
+    parrot_relay_log.txt is created in the same folder as the exe and
+    appended to on every run (not overwritten), so multiple runs can
+    be compared afterwards.
 """
 
 import sys
@@ -99,11 +98,11 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------
-# Pfade
+# Paths
 # ---------------------------------------------------------------------
 
 if getattr(sys, "frozen", False):
-    # Als PyInstaller-EXE: eigener Speicherort statt __file__
+    # As a PyInstaller EXE: use its own location instead of __file__
     TP_DIR = os.path.dirname(sys.executable)
 else:
     TP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -114,29 +113,29 @@ USER_PROFILES_DIR = os.path.join(TP_DIR, "UserProfiles")
 LOADING_BG_DIR = os.path.join(TP_DIR, "LoadingBG")
 ICONS_DIR = os.path.join(TP_DIR, "Icons")
 
-# Unterstuetzte Bild-Endungen fuer den Splash-Hintergrund. .png/.gif
-# koennen von Tkinter selbst geladen werden (PhotoImage), fuer den
-# Rest wird - falls installiert - Pillow verwendet.
+# Supported image extensions for the splash background. .png/.gif can
+# be loaded by Tkinter itself (PhotoImage); for everything else,
+# Pillow is used if installed.
 NATIVE_IMAGE_EXTS = (".png", ".gif")
 PILLOW_IMAGE_EXTS = (".jpg", ".jpeg", ".bmp", ".webp")
 
-# Wie oft (Sekunden) und wie lange die Fokus-Schleife pollt.
-# Bewusst kurz gehalten: je schneller ein neu erscheinendes TP-eigenes
-# Fenster erkannt und versteckt wird, desto kleiner das Zeitfenster,
-# in dem das Spiel seinen exklusiven Vollbildmodus verlieren koennte.
+# How often (seconds) the focus loop polls.
+# Deliberately kept short: the faster a newly appearing TP-owned
+# window is detected and hidden, the smaller the window of time in
+# which the game could lose its exclusive fullscreen mode.
 POLL_INTERVAL = 0.05
-# Mindestgroesse (Pixel-Flaeche), damit winzige Hilfsfenster (Tooltips,
-# TPs eigenes kleines "Spiel laeuft"-Fenster) nicht versehentlich als
-# "das Spielfenster" behandelt werden. Bei Bedarf anpassen.
+# Minimum size (pixel area) so tiny helper windows (tooltips, TP's
+# own small "Game is running" window) don't accidentally get treated
+# as "the game window". Adjust if needed.
 MIN_WINDOW_AREA = 200 * 150
 
 
 def extract_profile_name(args: list[str]) -> str | None:
     """
-    Holt den rohen Profil-Dateinamen aus --profile=XYZ.xml (z.B.
-    'BBCF.xml' -> 'BBCF'). Wird sowohl zum Nachschlagen der echten
-    GameNameInternal in der UserProfiles-XML als auch zum Finden des
-    passenden Hintergrundbilds verwendet.
+    Extracts the raw profile filename from --profile=XYZ.xml (e.g.
+    'BBCF.xml' -> 'BBCF'). Used both to look up the real
+    GameNameInternal in the UserProfiles XML and to find the matching
+    background image.
     """
     for arg in args:
         m = re.match(r"--profile=(.+)\.xml$", arg, re.IGNORECASE)
@@ -147,14 +146,14 @@ def extract_profile_name(args: list[str]) -> str | None:
 
 def lookup_game_name(profile_name: str | None) -> str:
     r"""
-    Liest GameNameInternal aus UserProfiles\<profile_name>.xml (z.B.
-    "BlazBlue: Central Fiction" statt nur "BBCF"). Bei jedem Fehler
-    (Datei fehlt, Feld fehlt, XML kaputt) wird auf den rohen
-    Profilnamen zurueckgefallen - der Splash zeigt dann eben "BBCF"
-    statt des schoenen Namens, aber bricht nie deswegen ab.
+    Reads GameNameInternal from UserProfiles\<profile_name>.xml (e.g.
+    "BlazBlue: Central Fiction" instead of just "BBCF"). On any error
+    (file missing, field missing, XML broken) falls back to the raw
+    profile name - the splash then just shows "BBCF" instead of the
+    nice name, but never breaks because of it.
     """
     if not profile_name:
-        return "Spiel"
+        return "Game"
 
     xml_path = os.path.join(USER_PROFILES_DIR, f"{profile_name}.xml")
     try:
@@ -165,19 +164,20 @@ def lookup_game_name(profile_name: str | None) -> str:
     except (ET.ParseError, FileNotFoundError, OSError):
         pass
     except Exception:
-        log("FEHLER beim Lesen von GameNameInternal:\n" + traceback.format_exc())
+        log("ERROR reading GameNameInternal:\n" + traceback.format_exc())
 
     return profile_name
 
 
 def find_background_image(profile_name: str | None) -> str | None:
     r"""
-    Sucht zuerst LoadingBG\<profile_name>.<ext>. Falls nichts
-    gefunden wird, faellt auf TPs eigenes Icon aus Icons\<profile_name>.png
-    zurueck (das TeknoParrot pro Spiel ohnehin schon hat, z.B. per
-    IconName in der Profil-XML - <IconName>Icons/BBCF.png</IconName>).
-    Gibt None zurueck, wenn auch das nicht existiert (dann bleibt der
-    Splash schwarz ohne Bild).
+    First looks for LoadingBG\<profile_name>.<ext>. If nothing is
+    found, falls back to TP's own icon at Icons\<profile_name>.png
+    (which TeknoParrot already has per game anyway, e.g. via
+    IconName in the profile XML -
+    <IconName>Icons/BBCF.png</IconName>).
+    Returns None if that doesn't exist either (the splash then stays
+    black without an image).
     """
     if not profile_name:
         return None
@@ -199,20 +199,19 @@ def find_background_image(profile_name: str | None) -> str | None:
 
 class SplashScreen:
     """
-    Eigener Vollbild-Ladebildschirm (Ersatz fuer HyperOverlays Loading-
-    Screen), der anzeigt was gerade gestartet wird. Wird automatisch
-    geschlossen, sobald das echte Spielfenster gefunden wurde.
+    Own fullscreen loading screen (replacement for HyperOverlay's
+    loading screen) that shows what's currently starting. Closes
+    automatically once the real game window has been found.
 
-    Laeuft im Hauptthread ueber Tkinters eigene Ereignisschleife - die
-    komplette Proxy-Ueberwachungslogik (TP-Fenster unterdruecken,
-    Spielfenster suchen/fokussieren) wird per root.after() als
-    wiederkehrender Callback eingehaengt, statt in einer separaten
-    time.sleep-Schleife zu laufen.
+    Runs on the main thread via Tkinter's own event loop - the
+    complete proxy monitoring logic (suppress TP windows, find/focus
+    game window) is hooked in as a recurring callback via
+    root.after(), instead of running in a separate time.sleep loop.
     """
 
     def __init__(self, game_name: str, bg_image_path: str | None):
         self.root = tk.Tk()
-        self.root.overrideredirect(True)  # keine Titelleiste/Rahmen
+        self.root.overrideredirect(True)  # no title bar/border
         self.root.attributes("-topmost", True)
         self.root.configure(bg="black")
 
@@ -226,28 +225,28 @@ class SplashScreen:
         )
         self.canvas.pack(fill="both", expand=True)
 
-        # self._bg_photo muss als Attribut gehalten werden, sonst
-        # entfernt Python das PhotoImage-Objekt per Garbage Collection
-        # wieder, sobald __init__ zurueckkehrt, und das Bild verschwindet.
+        # self._bg_photo must be kept as an attribute, otherwise
+        # Python's garbage collector removes the PhotoImage object
+        # again as soon as __init__ returns, and the image disappears.
         self._bg_photo = None
         image_h = 0
         if bg_image_path:
             self._bg_photo = self._load_image_native_size(bg_image_path)
             if self._bg_photo:
                 image_h = self._bg_photo.height()
-                log(f"Bild geladen (Originalgroesse "
+                log(f"Image loaded (native size "
                     f"{self._bg_photo.width()}x{image_h}): {bg_image_path}")
             else:
-                log(f"Bild konnte nicht geladen werden: {bg_image_path}")
+                log(f"Could not load image: {bg_image_path}")
 
-        # Vertikaler Block aus [Bild] -> Spielname -> Status, als
-        # Ganzes auf dem Bildschirm zentriert. anchor="n" verankert
-        # jedes Element an seiner Oberkante, dadurch reicht es, die
-        # y-Position einfach fortlaufend nach unten zu addieren.
+        # Vertical stack of [image] -> game name -> status, centered
+        # as a whole on the screen. anchor="n" anchors each element
+        # at its top edge, so the y-position just needs to keep
+        # increasing downward.
         gap_image_to_name = 30
         gap_name_to_status = 15
-        name_line_h = 55   # ungefaehre Zeilenhoehe bei Font-Groesse 40
-        status_line_h = 30  # ungefaehre Zeilenhoehe bei Font-Groesse 20
+        name_line_h = 55   # approx line height at font size 40
+        status_line_h = 30  # approx line height at font size 20
 
         total_h = (
             (image_h + gap_image_to_name if image_h else 0)
@@ -279,9 +278,9 @@ class SplashScreen:
 
     def _load_image_native_size(self, path: str):
         """
-        Laedt ein Bild in seiner ORIGINALGROESSE (keine Skalierung).
-        Nutzt Pillow falls verfuegbar (mehr unterstuetzte Formate),
-        sonst Tkinters eigenes PhotoImage (nur PNG/GIF).
+        Loads an image at its ORIGINAL SIZE (no scaling). Uses
+        Pillow if available (more supported formats), otherwise
+        Tkinter's own PhotoImage (PNG/GIF only).
         """
         ext = os.path.splitext(path)[1].lower()
 
@@ -290,7 +289,7 @@ class SplashScreen:
                 img = Image.open(path)
                 return ImageTk.PhotoImage(img)
             except Exception:
-                log("FEHLER beim Laden des Bilds mit Pillow:\n"
+                log("ERROR loading image with Pillow:\n"
                     + traceback.format_exc())
                 return None
 
@@ -298,12 +297,12 @@ class SplashScreen:
             try:
                 return tk.PhotoImage(file=path)
             except Exception:
-                log("FEHLER beim Laden des Bilds ohne Pillow:\n"
+                log("ERROR loading image without Pillow:\n"
                     + traceback.format_exc())
                 return None
 
-        log(f"Bildformat {ext} benoetigt Pillow (nicht installiert) - "
-            f"ueberspringe Bild.")
+        log(f"Image format {ext} requires Pillow (not installed) - "
+            f"skipping image.")
         return None
 
     def set_status(self, text: str) -> None:
@@ -341,15 +340,15 @@ def is_admin() -> bool:
 
 
 # ---------------------------------------------------------------------
-# Fenster-/Prozess-Hilfsfunktionen
+# Window/process helper functions
 # ---------------------------------------------------------------------
 
 def get_descendant_pids(root_pid: int) -> set[int]:
-    """Liefert root_pid plus alle (rekursiven) Kindprozess-PIDs."""
+    """Returns root_pid plus all (recursive) child process PIDs."""
     try:
         root = psutil.Process(root_pid)
     except psutil.NoSuchProcess:
-        log(f"WARNUNG: Root-Prozess {root_pid} existiert nicht mehr")
+        log(f"WARNING: root process {root_pid} no longer exists")
         return set()
 
     pids = {root_pid}
@@ -357,19 +356,19 @@ def get_descendant_pids(root_pid: int) -> set[int]:
         for child in root.children(recursive=True):
             pids.add(child.pid)
     except psutil.AccessDenied:
-        log("WARNUNG: AccessDenied beim Auflisten der Kindprozesse "
-            "(laeuft der Proxy nicht als Admin, TP aber schon?)")
+        log("WARNING: AccessDenied while listing child processes "
+            "(is the proxy not running as admin while TP is?)")
     except Exception:
-        log("FEHLER beim Auflisten der Kindprozesse:\n" + traceback.format_exc())
+        log("ERROR listing child processes:\n" + traceback.format_exc())
     return pids
 
 
 def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
     """
-    Sucht sichtbare Top-Level-Fenster, deren Prozess zu 'pids' gehoert,
-    ausser exclude_pid (= TeknoParrotUi.exe selbst). Sortiert nach
-    Fensterflaeche absteigend, kleine Fenster unterhalb MIN_WINDOW_AREA
-    werden ausgefiltert.
+    Finds visible top-level windows whose process belongs to 'pids',
+    except exclude_pid (= TeknoParrotUi.exe itself). Sorted by window
+    area descending; windows smaller than MIN_WINDOW_AREA are
+    filtered out.
     """
     candidates = []
 
@@ -394,7 +393,7 @@ def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
     try:
         win32gui.EnumWindows(callback, None)
     except Exception:
-        log("FEHLER in EnumWindows:\n" + traceback.format_exc())
+        log("ERROR in EnumWindows:\n" + traceback.format_exc())
 
     candidates.sort(reverse=True)
     return [hwnd for _, hwnd in candidates]
@@ -402,19 +401,19 @@ def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
 
 def find_tp_own_windows(tp_pid: int) -> list[int]:
     """
-    Sucht sichtbare Top-Level-Fenster, die zu TeknoParrotUi.exe SELBST
-    gehoeren UND deren Titel exakt einem der bekannten, harmlosen
-    TP-eigenen Laufzeit-Fenster entspricht (z.B. "Spiel läuft").
+    Finds visible top-level windows that belong to TeknoParrotUi.exe
+    ITSELF AND whose title exactly matches one of the known, harmless
+    TP-owned runtime windows (e.g. "Game is running").
 
-    WICHTIG: Bewusst NICHT jedes TP-Fenster pauschal unterdruecken -
-    sonst wuerden auch TP-Fehlerdialoge (Absturz, fehlende DLL, Profil-
-    Fehler etc.) unsichtbar gemacht, was die Fehlersuche unmoeglich
-    macht und im schlimmsten Fall zu einem rein schwarzen Bildschirm
-    ohne jede Rueckmeldung fuehrt, falls das Spiel selbst haengt oder
-    abstuerzt.
+    IMPORTANT: Deliberately does NOT suppress every TP window on
+    principle - otherwise TP error dialogs (crash, missing DLL,
+    profile error etc.) would also become invisible, which would make
+    troubleshooting impossible and, in the worst case, lead to a
+    plain black screen with no feedback at all if the game itself
+    hangs or crashes.
     """
-    # Bekannte, unbedenkliche Laufzeit-Fenstertitel von TeknoParrotUi.exe.
-    # Alles andere (Fehlerdialoge, unbekannte Titel) bleibt sichtbar.
+    # Known, harmless runtime window titles of TeknoParrotUi.exe.
+    # Anything else (error dialogs, unknown titles) stays visible.
     KNOWN_HARMLESS_TITLES = {"Spiel läuft", "Game is running"}
 
     windows = []
@@ -439,17 +438,17 @@ def find_tp_own_windows(tp_pid: int) -> list[int]:
     try:
         win32gui.EnumWindows(callback, None)
     except Exception:
-        log("FEHLER in EnumWindows (TP-eigene Fenster):\n" + traceback.format_exc())
+        log("ERROR in EnumWindows (TP-owned windows):\n" + traceback.format_exc())
 
     return windows
 
 
 def suppress_window(hwnd: int) -> bool:
     """
-    Versteckt ein TP-eigenes Fenster (Minimieren + aus der Taskleiste/
-    Alt-Tab entfernen), damit es Windows gar nicht erst als Fokus-
-    Kandidat anbietet. Gibt True zurueck, wenn tatsaechlich etwas
-    veraendert wurde (fuers Logging), sonst False.
+    Hides a TP-owned window (minimize + remove from taskbar/Alt-Tab)
+    so Windows never even offers it as a focus candidate. Returns
+    True if something was actually changed (for logging), False
+    otherwise.
     """
     if not win32gui.IsWindow(hwnd):
         return False
@@ -460,31 +459,31 @@ def suppress_window(hwnd: int) -> bool:
     except win32gui.error as e:
         if len(e.args) >= 1 and e.args[0] == 1400:
             return False
-        log("FEHLER beim Verstecken von TP-Fenster:\n" + traceback.format_exc())
+        log("ERROR hiding TP window:\n" + traceback.format_exc())
         return False
     except Exception:
-        log("FEHLER beim Verstecken von TP-Fenster:\n" + traceback.format_exc())
+        log("ERROR hiding TP window:\n" + traceback.format_exc())
         return False
 
 
 def force_focus(hwnd: int) -> None:
     """
-    Erzwingt den Fokus auf hwnd, auch wenn Windows' Foreground-Lock das
-    normalerweise verhindert. Trick: den Input-Thread des aktuell aktiven
-    Fensters kurz an den eigenen Thread anhaengen (AttachThreadInput) -
-    das umgeht die Sperre, siehe u.a. MSDN-Dokumentation zu
+    Forces focus onto hwnd, even when Windows' foreground lock would
+    normally prevent it. Trick: briefly attach the currently active
+    window's input thread to our own thread (AttachThreadInput) -
+    this bypasses the lock, see e.g. the MSDN documentation for
     SetForegroundWindow.
 
-    Manche Kandidatenfenster (z.B. TeknoParrots kurzlebiges
-    D3DProxyWindow waehrend des DirectX-Hookings) existieren nur fuer
-    Sekundenbruchteile. Zwischen "als Kandidat gefunden" und "hier
-    fokussieren" kann das Fenster also schon zerstoert sein - das ist
-    normal und kein echter Fehler, deshalb vorab per IsWindow pruefen
-    und in dem Fall still (ohne FEHLER-Log) abbrechen.
+    Some candidate windows (e.g. TeknoParrot's short-lived
+    D3DProxyWindow during DirectX hooking) only exist for a fraction
+    of a second. Between "found as a candidate" and "focusing here",
+    the window may already be destroyed - this is normal and not a
+    real error, so it's checked up front via IsWindow and, in that
+    case, aborted silently (without an ERROR log).
     """
     if not win32gui.IsWindow(hwnd):
-        log(f"Zielfenster hwnd={hwnd} existiert nicht mehr (kurzlebiges "
-            f"Uebergangsfenster) - ueberspringe.")
+        log(f"Target window hwnd={hwnd} no longer exists (short-lived "
+            f"transition window) - skipping.")
         return
 
     fg_thread = 0
@@ -513,15 +512,16 @@ def force_focus(hwnd: int) -> None:
 
     except win32gui.error as e:
         if len(e.args) >= 1 and e.args[0] == 1400:
-            # ERROR_INVALID_WINDOW_HANDLE - Fenster ist zwischen Fund und
-            # Fokussierung verschwunden (Race Condition bei kurzlebigen
-            # Uebergangsfenstern). Kein echter Fehler, kurz ignorieren.
-            log(f"Zielfenster hwnd={hwnd} verschwand waehrend des "
-                f"Fokussierens - ueberspringe.")
+            # ERROR_INVALID_WINDOW_HANDLE - the window disappeared
+            # between being found and being focused (race condition
+            # with short-lived transition windows). Not a real error,
+            # ignore briefly.
+            log(f"Target window hwnd={hwnd} disappeared while "
+                f"focusing - skipping.")
         else:
-            log("FEHLER beim Fokussieren:\n" + traceback.format_exc())
+            log("ERROR while focusing:\n" + traceback.format_exc())
     except Exception:
-        log("FEHLER beim Fokussieren:\n" + traceback.format_exc())
+        log("ERROR while focusing:\n" + traceback.format_exc())
 
     finally:
         try:
@@ -544,26 +544,26 @@ def describe_hwnd(hwnd: int) -> str:
             proc = "?"
         return f"hwnd={hwnd} pid={pid} proc={proc} class={cls} title='{title}'"
     except Exception:
-        return f"hwnd={hwnd} (Details nicht lesbar)"
+        return f"hwnd={hwnd} (details not readable)"
 
 
 # ---------------------------------------------------------------------
-# Hauptablauf
+# Main flow
 # ---------------------------------------------------------------------
 
 def main() -> None:
     log("=" * 60)
-    log("ParrotRelay gestartet")
+    log("ParrotRelay started")
     log(f"TP_DIR   = {TP_DIR}")
     log(f"TP_EXE   = {TP_EXE}")
     log(f"Args     = {sys.argv[1:]}")
     log(f"Elevated = {is_admin()}")
 
     if not os.path.isfile(TP_EXE):
-        log(f"FEHLER: {TP_EXE} nicht gefunden - Abbruch.")
+        log(f"ERROR: {TP_EXE} not found - aborting.")
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"TeknoParrotUi.exe nicht gefunden in:\n{TP_DIR}",
+            f"TeknoParrotUi.exe not found in:\n{TP_DIR}",
             "ParrotRelay",
             0x10,
         )
@@ -577,20 +577,20 @@ def main() -> None:
     try:
         proc = subprocess.Popen([TP_EXE] + args, cwd=TP_DIR)
     except Exception:
-        log("FEHLER beim Starten von TeknoParrotUi.exe:\n" + traceback.format_exc())
+        log("ERROR starting TeknoParrotUi.exe:\n" + traceback.format_exc())
         return
 
     tp_pid = proc.pid
-    log(f"TeknoParrotUi.exe gestartet, PID={tp_pid}")
+    log(f"TeknoParrotUi.exe started, PID={tp_pid}")
 
     splash = SplashScreen(game_name, bg_image_path)
-    log(f"Splash-Screen angezeigt fuer '{game_name}' "
-        f"(Profil: {profile_name or '?'})")
+    log(f"Splash screen shown for '{game_name}' "
+        f"(profile: {profile_name or '?'})")
 
-    # Gemeinsamer Zustand fuer den wiederkehrenden Tick-Callback. Ein
-    # dict statt einzelner nonlocal-Variablen, weil tick() als
-    # geschachtelte Funktion mehrfach neu ueber root.after() aufgerufen
-    # wird und so alles an einem Ort bleibt.
+    # Shared state for the recurring tick callback. A dict instead of
+    # individual nonlocal variables, because tick() is a nested
+    # function that gets called repeatedly via root.after(), so
+    # keeping everything in one place is simpler.
     state = {
         "last_focused_hwnd": None,
         "suppressed_hwnds_logged": set(),
@@ -603,23 +603,22 @@ def main() -> None:
         tp_launcher_running = proc.poll() is None
 
         if not tp_launcher_running and not state["tp_launcher_exited_logged"]:
-            log(f"TeknoParrotUi.exe (Launcher-Stub) beendet, "
-                f"Exitcode={proc.returncode} - Proxy bleibt aktiv, "
-                f"solange das eigentliche Spiel noch laeuft.")
+            log(f"TeknoParrotUi.exe (launcher stub) exited, "
+                f"exit code={proc.returncode} - proxy stays alive as "
+                f"long as the actual game is still running.")
             state["tp_launcher_exited_logged"] = True
 
-        # 1) TP-eigene Fenster (Hauptfenster, "Spiel laeuft") aktiv
-        #    verstecken, BEVOR sie ueberhaupt Fokus/Vordergrund
-        #    bekommen koennen.
+        # 1) Actively hide TP-owned windows (main window, "Game is
+        #    running") BEFORE they can ever take focus/foreground.
         if tp_launcher_running:
             tp_windows = find_tp_own_windows(tp_pid)
             for hwnd in tp_windows:
                 changed = suppress_window(hwnd)
                 if changed and hwnd not in state["suppressed_hwnds_logged"]:
-                    log(f"TP-eigenes Fenster unterdrueckt: {describe_hwnd(hwnd)}")
+                    log(f"TP-owned window suppressed: {describe_hwnd(hwnd)}")
                     state["suppressed_hwnds_logged"].add(hwnd)
 
-        # 2) Echtes Spielfenster suchen/fokussieren.
+        # 2) Find/focus the real game window.
         if tp_launcher_running:
             pids = get_descendant_pids(tp_pid)
         elif state["game_pid_seen"] is not None:
@@ -634,55 +633,54 @@ def main() -> None:
             if state["game_pid_seen"] is None:
                 _, state["game_pid_seen"] = win32process.GetWindowThreadProcessId(hwnd)
 
-            # Splash-Screen erst jetzt schliessen - das echte Spiel-
-            # fenster existiert nachweislich, also kann der eigene
-            # Ladebildschirm weg.
+            # Only close the splash screen now - the real game window
+            # provably exists, so the loading screen can go.
             if not state["splash_closed"]:
                 splash.close()
                 state["splash_closed"] = True
-                log(f"Splash-Screen geschlossen - Zielfenster gefunden: "
+                log(f"Splash screen closed - target window found: "
                     f"{describe_hwnd(hwnd)}")
 
             if win32gui.GetForegroundWindow() != hwnd:
                 if hwnd != state["last_focused_hwnd"]:
-                    log(f"Neues Zielfenster erkannt: {describe_hwnd(hwnd)}")
+                    log(f"New target window detected: {describe_hwnd(hwnd)}")
                 force_focus(hwnd)
             state["last_focused_hwnd"] = hwnd
         elif not state["splash_closed"]:
-            # Noch kein Zielfenster gefunden - Splash-Status je nach
-            # Launcher-Zustand aktualisieren, rein informativ.
+            # No target window found yet - update splash status
+            # depending on launcher state, purely informational.
             if tp_launcher_running:
                 splash.set_status("Loading...")
             else:
-                splash.set_status("Startet...")
+                splash.set_status("Starting...")
 
-        # Abbruchbedingung: Launcher weg UND (kein Spiel je erkannt ODER
-        # das erkannte Spiel laeuft nachweislich nicht mehr).
+        # Exit condition: launcher gone AND (either no game was ever
+        # detected, OR the detected game is provably no longer
+        # running).
         if not tp_launcher_running:
             if state["game_pid_seen"] is None:
-                log("Kein Spielprozess wurde je erkannt und der Launcher "
-                    "ist beendet - Proxy wird beendet.")
+                log("No game process was ever detected and the "
+                    "launcher has exited - proxy shutting down.")
                 if not state["splash_closed"]:
                     splash.close()
                 splash.root.quit()
                 return
             if not psutil.pid_exists(state["game_pid_seen"]):
-                log(f"Spielprozess (PID {state['game_pid_seen']}) ist "
-                    f"beendet - Proxy wird beendet.")
+                log(f"Game process (PID {state['game_pid_seen']}) has "
+                    f"exited - proxy shutting down.")
                 splash.root.quit()
                 return
 
-        # Naechsten Tick einplanen (Millisekunden).
+        # Schedule the next tick (milliseconds).
         splash.root.after(int(POLL_INTERVAL * 1000), tick)
 
-    # Ersten Tick anstossen, dann Tkinters eigene Ereignisschleife
-    # uebernehmen lassen - sie treibt sowohl das Splash-Fenster als
-    # auch (ueber die wiederkehrenden after()-Aufrufe) die komplette
-    # Ueberwachungslogik an.
+    # Kick off the first tick, then let Tkinter's own event loop take
+    # over - it drives both the splash window and (via the recurring
+    # after() calls) the complete monitoring logic.
     splash.root.after(0, tick)
     splash.root.mainloop()
 
-    log("ParrotRelay beendet")
+    log("ParrotRelay stopped")
     log("=" * 60 + "\n")
 
 
@@ -690,6 +688,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        log("UNBEHANDELTER FEHLER:\n" + traceback.format_exc())
+        log("UNHANDLED ERROR:\n" + traceback.format_exc())
     finally:
         _log_file.close()
