@@ -1,17 +1,15 @@
 name: Build
 
-# Builds ParrotRelay on Windows and packs the complete onedir output
-# (ParrotRelay.exe + the ParrotRelay folder with the runtime files)
-# into a single zip.
+# CI build: builds ParrotRelay on Windows for every push and pull
+# request and attaches the zip to the run, so a change can be tried
+# out before it is released.
 #
-#   - every push/PR: the zip is attached to the run as an artifact
-#   - a pushed tag (v1.2.3): the zip is also attached to a release
-#   - "Run workflow" in the Actions tab builds on demand
+# Releases are NOT made here - that is the "Build new Release"
+# workflow (release.yml), started by hand from the Actions tab.
 
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -22,9 +20,6 @@ jobs:
   build:
     # PyInstaller can't cross-compile, so a Windows runner is required.
     runs-on: windows-latest
-    permissions:
-      # Needed only by the release step on a tag build.
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -49,41 +44,17 @@ jobs:
           #   ParrotRelay.exe  +  ParrotRelay\ (runtime files)
           # Add the docs on top so the zip is self-contained.
           Copy-Item README.md, LICENSE dist\ParrotRelay\
-          Get-ChildItem -Recurse dist\ParrotRelay | Select-Object FullName
-
-      - name: Determine package name
-        id: name
-        shell: pwsh
-        run: |
-          $ref = "${{ github.ref }}"
-          if ($ref -like "refs/tags/*") {
-            $version = $ref -replace "^refs/tags/", ""
-          } else {
-            $version = "$(git rev-parse --short HEAD)"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "package=ParrotRelay-$version" >> $env:GITHUB_OUTPUT
 
       - name: Create zip
+        id: package
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\ParrotRelay\* `
-            -DestinationPath "${{ steps.name.outputs.package }}.zip"
+          $name = "ParrotRelay-$(git rev-parse --short HEAD)"
+          Compress-Archive -Path dist\ParrotRelay\* -DestinationPath "$name.zip"
+          "name=$name" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.name.outputs.package }}
-          path: ${{ steps.name.outputs.package }}.zip
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.zip
           if-no-files-found: error
-
-      - name: Attach zip to release
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ steps.name.outputs.version }}" `
-            "${{ steps.name.outputs.package }}.zip" `
-            --title "${{ steps.name.outputs.version }}" `
-            --generate-notes `
-            --repo "${{ github.repository }}"

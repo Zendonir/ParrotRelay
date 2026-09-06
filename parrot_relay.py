@@ -157,6 +157,11 @@ except ImportError:
     _PILLOW_AVAILABLE = False
 
 
+# Version of this build. The "Build new Release" workflow rewrites
+# this line when it cuts a release, so the number in the GUI, in the
+# log and on the release tag are always the same one.
+VERSION = "0.0.0-dev"
+
 # ---------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------
@@ -881,10 +886,11 @@ def game_config_header(profile_name: str, game_name: str,
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return [
         f'ParrotRelay - settings for "{game_name}"',
-        f"Written on {stamp}. Safe to edit by hand; ParrotRelay only",
-        'reads the "key=value" lines and ignores everything else. The',
-        "settings window (start ParrotRelay.exe without arguments)",
-        "edits this file too.",
+        f"Written on {stamp} by ParrotRelay {VERSION}.",
+        "",
+        'Safe to edit by hand - only the "key=value" lines are read,',
+        "everything else is ignored. The settings window (start",
+        "ParrotRelay.exe without arguments) edits this file too.",
         "",
         "Detected for this game:",
         f"  profile    = {profile_name}.xml",
@@ -901,8 +907,11 @@ def global_config_header() -> list[str]:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return [
         "ParrotRelay - global defaults",
-        f"Written on {stamp}. These values apply to every game that",
-        "does not set them itself in GameConfigs\\<profile>.cfg.",
+        f"Written on {stamp} by ParrotRelay {VERSION}.",
+        "",
+        "These values apply to every game that does not set them",
+        "itself in GameConfigs\\<profile>.cfg - a value set there always",
+        "wins over the one here.",
     ]
 
 
@@ -1016,7 +1025,7 @@ class SettingsWindow:
         from tkinter import ttk
 
         self.root = tk.Tk()
-        self.root.title("ParrotRelay - Settings")
+        self.root.title(f"ParrotRelay {VERSION} - Settings")
         self.root.geometry("980x620")
         self.root.minsize(820, 520)
         try:
@@ -1091,10 +1100,14 @@ class SettingsWindow:
         right = ttk.Frame(panes, padding=(8, 0, 0, 0))
         panes.add(right, weight=2)
 
+        header = ttk.Frame(right)
+        header.pack(fill="x")
+
         self.title_var = tk.StringVar()
-        title = ttk.Label(right, textvariable=self.title_var,
-                          font=("Segoe UI", 13, "bold"))
-        title.pack(anchor="w")
+        ttk.Label(header, textvariable=self.title_var,
+                  font=("Segoe UI", 13, "bold")).pack(side="left")
+        ttk.Label(header, text=f"ParrotRelay {VERSION}",
+                  foreground="#888888").pack(side="right")
 
         self.subtitle_var = tk.StringVar()
         ttk.Label(right, textvariable=self.subtitle_var,
@@ -1544,8 +1557,8 @@ class SettingsWindow:
     def _environment_summary(self) -> str:
         tp = "TeknoParrotUi.exe found" if os.path.isfile(TP_EXE) \
             else "WARNING: TeknoParrotUi.exe NOT found next to ParrotRelay.exe"
-        return (f"{tp}   |   {len(self.games)} games   |   "
-                f"data: {DATA_DIR}")
+        return (f"ParrotRelay {VERSION}   |   {tp}   |   "
+                f"{len(self.games)} games   |   data: {DATA_DIR}")
 
     def _confirm_discard(self) -> bool:
         from tkinter import messagebox
@@ -1784,7 +1797,7 @@ def describe_hwnd(hwnd: int) -> str:
 
 def main() -> None:
     log("=" * 60)
-    log("ParrotRelay started")
+    log(f"ParrotRelay {VERSION} started")
     log(f"TP_DIR   = {TP_DIR}")
     log(f"TP_EXE   = {TP_EXE}")
     log(f"Args     = {sys.argv[1:]}")

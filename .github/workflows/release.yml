@@ -1,0 +1,144 @@
+name: Build new Release
+
+# Cuts a release on demand: bumps the version, tags it, builds on
+# Windows and attaches one zip with everything in it.
+#
+# Actions tab -> "Build new Release" -> Run workflow -> pick how to
+# bump the version (or type an exact one).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "How to bump the version"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Exact version instead (e.g. 1.4.0, leave empty to bump)"
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the previous tag can be found, and a token
+          # that may push the version bump back.
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $explicit = "${{ inputs.version }}".Trim()
+          if ($explicit) {
+            $version = $explicit -replace '^v', ''
+          } else {
+            # Highest existing v* tag, or 0.0.0 if this is the first release.
+            $tags = git tag --list 'v*' | ForEach-Object { $_ -replace '^v', '' } |
+              Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+              ForEach-Object { [version]$_ } | Sort-Object -Descending
+            $latest = if ($tags) { $tags[0] } else { [version]"0.0.0" }
+            switch ("${{ inputs.bump }}") {
+              "major" { $version = "$($latest.Major + 1).0.0" }
+              "minor" { $version = "$($latest.Major).$($latest.Minor + 1).0" }
+              default { $version = "$($latest.Major).$($latest.Minor).$($latest.Build + 1)" }
+            }
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Not a valid version: $version (expected e.g. 1.4.0)"
+          }
+          if (git tag --list "v$version") {
+            throw "Tag v$version already exists."
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "package=ParrotRelay-v$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing version $version"
+
+      - name: Stamp version into the source
+        shell: pwsh
+        run: |
+          $path = "parrot_relay.py"
+          $content = Get-Content $path -Raw
+          $updated = [regex]::Replace(
+            $content, '(?m)^VERSION = ".*"$',
+            'VERSION = "${{ steps.version.outputs.version }}"')
+          if ($updated -eq $content) {
+            throw "VERSION line not found in $path - nothing was stamped."
+          }
+          Set-Content $path $updated -NoNewline
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build
+        run: pyinstaller --noconfirm --clean ParrotRelay.spec
+
+      - name: Stage package contents
+        shell: pwsh
+        run: Copy-Item README.md, LICENSE dist\ParrotRelay\
+
+      - name: Create zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\ParrotRelay\* `
+            -DestinationPath "${{ steps.version.outputs.package }}.zip"
+
+      - name: Commit and tag the version bump
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # "[skip ci]" keeps this push from triggering the CI build.
+          # Nothing to commit means the source already carried this
+          # version - tag it anyway.
+          if (git status --porcelain) {
+            git commit -am "Release ${{ steps.version.outputs.tag }} [skip ci]"
+          }
+          git tag -a "${{ steps.version.outputs.tag }}" `
+            -m "ParrotRelay ${{ steps.version.outputs.version }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ghArgs = @(
+            "release", "create", "${{ steps.version.outputs.tag }}",
+            "${{ steps.version.outputs.package }}.zip",
+            "--title", "ParrotRelay ${{ steps.version.outputs.version }}",
+            "--generate-notes",
+            "--target", "${{ github.ref_name }}",
+            "--repo", "${{ github.repository }}"
+          )
+          if ("${{ inputs.prerelease }}" -eq "true") { $ghArgs += "--prerelease" }
+          gh @ghArgs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.package }}
+          path: ${{ steps.version.outputs.package }}.zip
+          if-no-files-found: error

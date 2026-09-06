@@ -50,6 +50,7 @@ Start `ParrotRelay.exe` **without arguments** — i.e. double-click it instead o
 - **Apply to all games** for cabinet-wide settings
 - **Use global defaults** drops everything stored for one game; **Pin all values** does the opposite and writes every value as an explicit line, so the game keeps them no matter what the defaults do later
 - shortcuts to the log and the `RelayData` folder
+- the version you are running is shown in the title bar and the status line
 
 Everything it writes is a plain text file you can also edit by hand.
 
@@ -107,13 +108,19 @@ The runtime files stay where they are and are used directly on every launch — 
 
 ### Automated builds
 
-A [GitHub Actions workflow](.github/workflows/build.yml) builds ParrotRelay on a Windows runner and packs the complete output into one zip:
+Two [GitHub Actions workflows](.github/workflows) build on a Windows runner and pack the complete output into one zip containing `ParrotRelay.exe`, the `ParrotRelay` runtime folder, `README.md` and `LICENSE` — unpack it straight into the TeknoParrot folder.
 
-- every push and pull request attaches `ParrotRelay-<commit>.zip` to the workflow run (Actions tab &rarr; run &rarr; *Artifacts*)
-- pushing a tag like `v1.2.0` additionally creates a release with `ParrotRelay-v1.2.0.zip` attached
-- *Run workflow* in the Actions tab builds on demand
+**Build** runs on every push and pull request and attaches `ParrotRelay-<commit>.zip` to the workflow run (Actions tab &rarr; run &rarr; *Artifacts*). It never creates a release.
 
-The zip contains `ParrotRelay.exe`, the `ParrotRelay` runtime folder, `README.md` and `LICENSE` — unpack it straight into the TeknoParrot folder.
+**Build new Release** cuts a release on demand: Actions tab &rarr; *Build new Release* &rarr; *Run workflow*. Pick how to bump the version (`patch`/`minor`/`major`, or type an exact one like `1.4.0`) and it does the rest:
+
+1. works out the next version from the highest existing `v*` tag
+2. writes it into `parrot_relay.py`, so the number shows up in the settings window, in the log and in every config file the tool writes
+3. builds and zips
+4. commits the version bump, creates the tag `v<version>` and pushes both
+5. publishes the release with `ParrotRelay-v<version>.zip` attached and auto-generated notes
+
+Tick *prerelease* to mark it as one. The version bump commit carries `[skip ci]`, so it does not trigger a second CI build.
 
 ### One-file build
 
