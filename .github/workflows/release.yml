@@ -74,8 +74,12 @@ jobs:
         run: |
           $path = "parrot_relay.py"
           $content = Get-Content $path -Raw
+          # No "$" anchor on purpose: the checkout has Windows line
+          # endings, so the line ends in \r and an anchored pattern
+          # never lines up with the closing quote. Matching just the
+          # assignment also leaves the line ending untouched.
           $updated = [regex]::Replace(
-            $content, '(?m)^VERSION = ".*"$',
+            $content, '(?m)^VERSION = "[^"]*"',
             'VERSION = "${{ steps.version.outputs.version }}"')
           if ($updated -eq $content) {
             throw "VERSION line not found in $path - nothing was stamped."
