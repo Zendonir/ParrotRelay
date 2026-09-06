@@ -198,6 +198,29 @@ LOG_PATH = os.path.join(DATA_DIR, "parrot_relay_log.txt")
 GLOBAL_CONFIG_PATH = os.path.join(DATA_DIR, "ParrotRelay.cfg")
 
 
+def resource_path(name: str) -> str | None:
+    """
+    Finds a file that ships WITH ParrotRelay (as opposed to one the
+    user provides). PyInstaller puts bundled files in sys._MEIPASS -
+    the runtime folder in a onedir build, the unpack folder in a
+    onefile build - while running from source they sit next to the
+    script. Returns None if the file isn't there.
+    """
+    candidates = [
+        getattr(sys, "_MEIPASS", None),
+        os.path.dirname(os.path.abspath(__file__)),
+        RELAY_ROOT,
+        TP_DIR,
+    ]
+    for base in candidates:
+        if not base:
+            continue
+        candidate = os.path.join(base, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def _migrate_old_locations() -> None:
     """
     Moves data written by earlier versions into RelayData: the log
@@ -1026,14 +1049,15 @@ class SettingsWindow:
 
         self.root = tk.Tk()
         self.root.title(f"ParrotRelay {VERSION} - Settings")
-        self.root.geometry("980x620")
-        self.root.minsize(820, 520)
-        try:
-            icon = os.path.join(TP_DIR, "icon.ico")
-            if os.path.isfile(icon):
-                self.root.iconbitmap(icon)
-        except tk.TclError:
-            pass
+        self._default_geometry = (980, 620)
+        # default=... so every window of this app gets the icon, the
+        # preview window included - not just the main one.
+        icon = resource_path("icon.ico")
+        if icon:
+            try:
+                self.root.iconbitmap(default=icon)
+            except tk.TclError:
+                log(f"Could not apply the window icon: {icon}")
 
         # Created in _build_layout; the search box's change callback can
         # fire before that, so it must be able to tell.
@@ -1053,6 +1077,19 @@ class SettingsWindow:
         self._refresh_game_list()
         self._select_global()
 
+        # Don't let the window be dragged smaller than its contents
+        # need - that is what used to cut the buttons off at the
+        # bottom. Capped to the screen so it stays usable on a small
+        # cabinet display.
+        self.root.update_idletasks()
+        min_w = min(max(820, self.root.winfo_reqwidth()),
+                    self.root.winfo_screenwidth())
+        min_h = min(self.root.winfo_reqheight(),
+                    self.root.winfo_screenheight() - 60)
+        self.root.minsize(min_w, min_h)
+        self.root.geometry(f"{max(self._default_geometry[0], min_w)}x"
+                           f"{max(self._default_geometry[1], min_h)}")
+
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- layout --------------------------------------------------------
@@ -1062,6 +1099,32 @@ class SettingsWindow:
 
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
+
+        # Packing order is allocation order: whatever is packed first
+        # keeps its height when the window gets too small. So the
+        # footer and the status line go in first (from the bottom up),
+        # and the stretching panes take whatever is left - otherwise
+        # shrinking the window cuts the buttons off.
+        # wraplength keeps the long paths in these lines from dictating
+        # how wide the window has to be.
+        self.status_var = tk.StringVar(value=self._environment_summary())
+        ttk.Label(outer, textvariable=self.status_var, foreground="#555555",
+                  wraplength=780, justify="left").pack(
+            side="bottom", anchor="w", pady=(8, 0))
+
+        footer = ttk.Frame(outer)
+        footer.pack(side="bottom", fill="x", pady=(10, 0))
+        ttk.Separator(outer, orient="horizontal").pack(
+            side="bottom", fill="x", pady=(6, 0))
+
+        ttk.Button(footer, text="Open RelayData folder",
+                   command=lambda: open_in_explorer(DATA_DIR)).pack(side="left")
+        ttk.Button(footer, text="Open log",
+                   command=self._open_log).pack(side="left", padx=6)
+        ttk.Button(footer, text="Apply to all games...",
+                   command=self._apply_to_all).pack(side="left")
+        ttk.Button(footer, text="Close",
+                   command=self._on_close).pack(side="right")
 
         panes = ttk.PanedWindow(outer, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -1086,7 +1149,7 @@ class SettingsWindow:
         )
         self.tree.heading("#0", text="Game")
         self.tree.heading("configured", text="Configured")
-        self.tree.column("#0", width=250)
+        self.tree.column("#0", width=220)
         self.tree.column("configured", width=90, anchor="center", stretch=False)
         self.tree.pack(side="left", fill="both", expand=True)
 
@@ -1110,16 +1173,18 @@ class SettingsWindow:
                   foreground="#888888").pack(side="right")
 
         self.subtitle_var = tk.StringVar()
-        ttk.Label(right, textvariable=self.subtitle_var,
-                  foreground="#555555").pack(anchor="w", pady=(0, 10))
+        ttk.Label(right, textvariable=self.subtitle_var, foreground="#555555",
+                  wraplength=460, justify="left").pack(anchor="w",
+                                                       pady=(0, 10))
+
+        # Buttons for the current entry - packed before the form for
+        # the same reason as the footer above.
+        actions = ttk.Frame(right)
+        actions.pack(side="bottom", fill="x", pady=(10, 0))
 
         self.form = ttk.Frame(right)
         self.form.pack(fill="both", expand=True)
         self._build_form()
-
-        # Buttons for the current entry
-        actions = ttk.Frame(right)
-        actions.pack(fill="x", pady=(10, 0))
         ttk.Button(actions, text="Save",
                    command=self._save).pack(side="left")
         ttk.Button(actions, text="Revert",
@@ -1133,24 +1198,6 @@ class SettingsWindow:
         ttk.Button(actions, text="Preview loading screen",
                    command=self._preview).pack(side="right")
 
-        # Global footer
-        footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(10, 0))
-        ttk.Separator(outer, orient="horizontal").pack(
-            fill="x", before=footer, pady=(6, 6))
-
-        ttk.Button(footer, text="Open RelayData folder",
-                   command=lambda: open_in_explorer(DATA_DIR)).pack(side="left")
-        ttk.Button(footer, text="Open log",
-                   command=self._open_log).pack(side="left", padx=6)
-        ttk.Button(footer, text="Apply to all games...",
-                   command=self._apply_to_all).pack(side="left")
-        ttk.Button(footer, text="Close",
-                   command=self._on_close).pack(side="right")
-
-        self.status_var = tk.StringVar(value=self._environment_summary())
-        ttk.Label(outer, textvariable=self.status_var,
-                  foreground="#555555").pack(anchor="w", pady=(8, 0))
 
     def _build_form(self) -> None:
         from tkinter import ttk
@@ -1177,14 +1224,17 @@ class SettingsWindow:
                 var.trace_add("write", lambda *_: self._mark_dirty())
                 box = ttk.Frame(self.form)
                 box.grid(row=row * 2, column=1, sticky="ew", pady=(6, 0))
-                ttk.Entry(box, textvariable=var, width=44).pack(
+                ttk.Entry(box, textvariable=var, width=30).pack(
                     side="left", fill="x", expand=True)
                 ttk.Button(box, text="Browse...", width=10,
                            command=self._browse_background).pack(
                     side="left", padx=(6, 0))
 
-            ttk.Label(self.form, text=setting.help_text,
-                      foreground="#555555").grid(
+            # wraplength so a long explanation re-flows instead of
+            # forcing the whole window to be that wide.
+            ttk.Label(self.form, text=setting.help_text.replace("\n", " "),
+                      foreground="#555555", wraplength=380,
+                      justify="left").grid(
                 row=row * 2 + 1, column=0, columnspan=2, sticky="w")
 
             self.vars[setting.key] = var

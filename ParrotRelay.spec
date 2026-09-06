@@ -48,7 +48,9 @@ a = Analysis(
     ["parrot_relay.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    # The icon is bundled as a file too, not just baked into the exe:
+    # Tk needs a real .ico on disk for the window and taskbar icon.
+    datas=[("icon.ico", ".")],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
