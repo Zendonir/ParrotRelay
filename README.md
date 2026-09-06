@@ -74,10 +74,21 @@ The first time a game is launched, a `.cfg` is written for it containing what wa
 
 ```bash
 pip install -r requirements.txt
-pyinstaller --onefile --noconsole --icon=icon.ico --name ParrotRelay parrot_relay.py
+pyinstaller ParrotRelay.spec
 ```
 
-The finished `ParrotRelay.exe` will be in `dist\`.
+This produces `dist\ParrotRelay\` containing `ParrotRelay.exe` plus a `ParrotRelay` folder with the runtime files. Copy **both** into the TeknoParrot folder:
+
+```
+D:\ROM\TeknoParrot\ParrotRelay.exe
+D:\ROM\TeknoParrot\ParrotRelay\      <- runtime files, log, GameConfigs
+```
+
+The runtime files stay where they are and are used directly on every launch — nothing is ever unpacked into `%TEMP%`, startup is faster, and no temp folder can be left behind. It is the same `ParrotRelay` folder that holds the log and the per-game configs, so there is still only one extra folder next to `TeknoParrotUi.exe`.
+
+### One-file build
+
+Set `ONEFILE = True` at the top of `ParrotRelay.spec` for a single `dist\ParrotRelay.exe`. Note that a one-file build unpacks its whole runtime into a fresh folder on **every** launch and deletes it afterwards — existing files are never reused, that is how PyInstaller's one-file mode works. `RUNTIME_TMPDIR` in the spec can at least move that unpack folder out of `%TEMP%` and next to the exe (absolute path required). ParrotRelay cleans up `_MEI*` leftovers there on the next start.
 
 ## Logging
 

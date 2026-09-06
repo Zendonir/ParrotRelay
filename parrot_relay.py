@@ -104,6 +104,7 @@ import os
 import re
 import subprocess
 import time
+import shutil
 import traceback
 import ctypes
 import xml.etree.ElementTree as ET
@@ -460,6 +461,88 @@ def is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------
+# Runtime / build mode
+# ---------------------------------------------------------------------
+
+def describe_runtime_mode() -> str:
+    """
+    Says how this build is running - useful in the log, because the
+    two PyInstaller modes behave very differently:
+
+    onedir  - the runtime files sit permanently in the ParrotRelay
+              folder and are used directly. Nothing is unpacked, so
+              a launch reuses exactly the files that are already
+              there.
+    onefile - the bootloader unpacks the whole runtime into a fresh
+              folder on every launch and deletes it on exit. That is
+              inherent to onefile; existing files are never reused.
+    """
+    if not getattr(sys, "frozen", False):
+        return "script (not frozen)"
+
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir:
+        return "frozen (unknown mode)"
+
+    exe_dir = os.path.dirname(sys.executable)
+    try:
+        inside_exe_dir = os.path.commonpath(
+            [os.path.abspath(bundle_dir), os.path.abspath(exe_dir)]
+        ) == os.path.abspath(exe_dir)
+    except ValueError:  # different drives
+        inside_exe_dir = False
+
+    if inside_exe_dir and not os.path.basename(bundle_dir).startswith("_MEI"):
+        return f"onedir - runtime files reused from {bundle_dir}"
+    return f"onefile - runtime unpacked to {bundle_dir} (fresh copy per launch)"
+
+
+def cleanup_stale_runtime_dirs() -> None:
+    """
+    Removes _MEI* leftovers from a onefile build that was pointed at
+    our own folder via --runtime-tmpdir. Those only exist if a
+    previous run was killed before the bootloader could clean up (or
+    a child process still held a DLL open). Anything still in use
+    fails to delete, which is fine - we skip it silently.
+
+    Only ever touches _MEI* folders inside our own data folder;
+    the real %TEMP% is none of our business.
+    """
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir or not os.path.basename(bundle_dir).startswith("_MEI"):
+        return
+
+    parent = os.path.dirname(os.path.abspath(bundle_dir))
+    try:
+        if os.path.commonpath([parent, os.path.abspath(DATA_DIR)]) != \
+                os.path.abspath(DATA_DIR):
+            return
+    except ValueError:
+        return
+
+    removed = 0
+    try:
+        entries = os.listdir(parent)
+    except OSError:
+        return
+
+    for entry in entries:
+        if not entry.startswith("_MEI"):
+            continue
+        candidate = os.path.join(parent, entry)
+        if os.path.abspath(candidate) == os.path.abspath(bundle_dir):
+            continue  # that's us
+        try:
+            shutil.rmtree(candidate)
+            removed += 1
+        except OSError:
+            pass  # still locked by a running process - leave it alone
+
+    if removed:
+        log(f"Removed {removed} stale runtime folder(s) in {parent}")
 
 
 # ---------------------------------------------------------------------
@@ -854,6 +937,8 @@ def main() -> None:
     log(f"TP_EXE   = {TP_EXE}")
     log(f"Args     = {sys.argv[1:]}")
     log(f"Elevated = {is_admin()}")
+    log(f"Runtime  = {describe_runtime_mode()}")
+    cleanup_stale_runtime_dirs()
 
     if not os.path.isfile(TP_EXE):
         log(f"ERROR: {TP_EXE} not found - aborting.")
