@@ -52,15 +52,28 @@ Game name:
     the raw profile filename (e.g. "BBCF").
 
 Build (as EXE, WITHOUT admin requirement - see note below):
-    pyinstaller --onefile --noconsole --icon=icon.ico --name ParrotRelay parrot_relay.py
+    pyinstaller ParrotRelay.spec
+
+    The spec builds in onedir mode by default: ParrotRelay.exe plus a
+    "ParrotRelay" folder with the runtime files, both of which go into
+    the TeknoParrot folder. Those files are then used directly on
+    every launch - nothing is unpacked into %TEMP%, so startup is
+    faster, nothing can be left behind, and it is the same folder that
+    holds the log and the per-game configs.
+
+    Set ONEFILE = True in the spec for a single exe. Be aware that
+    onefile unpacks its whole runtime again on EVERY launch and never
+    reuses what is already there; RUNTIME_TMPDIR can only move that
+    unpack folder next to the exe, not avoid it.
 
 Note on admin rights: TeknoParrotUi.exe itself starts fine without
 elevating the proxy, and HyperHQ (not elevated) can't spawn an
 elevated proxy via spawn() anyway (Windows refuses with EACCES).
 That's why --uac-admin is deliberately NOT used.
 
-Copy the finished ParrotRelay.exe from dist\ to D:\ROM\TeknoParrot\
-(i.e. right next to TeknoParrotUi.exe).
+Copy the build output from dist\ParrotRelay\ (the exe AND the
+ParrotRelay folder next to it; just the exe for a onefile build) to
+D:\ROM\TeknoParrot\, i.e. right next to TeknoParrotUi.exe.
 
 HyperSpin 2 configuration:
     Platform Path: D:\ROM\TeknoParrot\ParrotRelay.exe
@@ -87,6 +100,8 @@ Loading screen delay (optional):
 Data folder and per-game configs:
     On first start a "ParrotRelay" folder is created next to the exe:
 
+      ParrotRelay\               - in a onedir build, this is also
+          where the runtime files live (see Build above).
       ParrotRelay\parrot_relay_log.txt   - the log (appended, not
           overwritten, so multiple runs can be compared). A log file
           from an older version still sitting next to the exe is
