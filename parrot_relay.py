@@ -90,28 +90,46 @@ Loading screen delay (optional):
             --relay-delay=4000
         (also accepted: --relaydelay= / --splash-delay=). The switch
         is consumed by ParrotRelay and never forwarded to TP.
-      - per game, permanently:
-            ParrotRelay\GameConfigs\<profile>.cfg
+      - per game, permanently, in the settings window or in
+            ParrotRelay\RelayData\GameConfigs\<profile>.cfg
             splash_extra_delay_ms=4000
 
-    Command line beats the .cfg, the .cfg beats the default (0).
-    Values are capped at 60000 ms.
+    Command line beats the game .cfg, which beats the global
+    defaults, which beat the built-in default (0). Values are capped
+    at 60000 ms.
+
+Settings window:
+    Starting ParrotRelay.exe WITHOUT arguments (i.e. double-clicking
+    it instead of letting HyperSpin call it) opens a settings window
+    instead of launching anything. It lists every TeknoParrot game and
+    edits the same .cfg files that can also be edited by hand:
+
+      - global defaults that apply to every game
+      - per-game overrides; a game only stores what actually differs,
+        so changing a default still reaches every game that never
+        overrode it
+      - preview of the loading screen (checks the background image)
+      - "Apply to all games" for cabinet-wide settings
+      - shortcuts to the log and the data folder
 
 Data folder and per-game configs:
-    On first start a "ParrotRelay" folder is created next to the exe:
+    On first start a "ParrotRelay\RelayData" folder is created:
 
-      ParrotRelay\               - in a onedir build, this is also
-          where the runtime files live (see Build above).
-      ParrotRelay\parrot_relay_log.txt   - the log (appended, not
-          overwritten, so multiple runs can be compared). A log file
-          from an older version still sitting next to the exe is
-          moved here automatically.
-      ParrotRelay\GameConfigs\<profile>.cfg - written the first time
-          a game is launched, containing what was detected for it
-          (profile, game name, background image) plus the settings
-          block. The file is yours afterwards: edit it, and
-          ParrotRelay picks the values up on the next launch. It is
-          never overwritten once it exists.
+      ParrotRelay\RelayData\parrot_relay_log.txt   - the log
+          (appended, not overwritten, so multiple runs can be compared)
+      ParrotRelay\RelayData\ParrotRelay.cfg        - global defaults
+      ParrotRelay\RelayData\GameConfigs\<profile>.cfg - per game,
+          written the first time a game is launched, containing what
+          was detected for it (profile, game name, background image)
+          plus every available setting with its explanation. Lines
+          starting with # follow the global defaults; removing the #
+          pins that value for this game.
+
+    RelayData is deliberately one level down: in a onedir build the
+    folder next to the exe is full of runtime DLLs, and mixing the
+    user's own files into that is just confusing. Data written by
+    older versions is moved into RelayData automatically.
+
 """
 
 import sys
@@ -151,10 +169,13 @@ else:
 
 TP_EXE = os.path.join(TP_DIR, "TeknoParrotUi.exe")
 
-# Own data folder next to the exe. Created on first start; holds the
-# log file and one .cfg per game. Everything ParrotRelay writes lives
-# here, so TeknoParrot's own folder stays clean.
-DATA_DIR = os.path.join(TP_DIR, "ParrotRelay")
+# In a onedir build the folder next to the exe holds the runtime files
+# (DLLs and the like) - a wall of files nobody wants to scroll
+# through. So everything ParrotRelay writes goes one level deeper into
+# "RelayData": the log and one .cfg per game, plus the global
+# defaults. That is the only folder a user ever needs to open.
+RELAY_ROOT = os.path.join(TP_DIR, "ParrotRelay")
+DATA_DIR = os.path.join(RELAY_ROOT, "RelayData")
 GAME_CONFIG_DIR = os.path.join(DATA_DIR, "GameConfigs")
 
 try:
@@ -164,17 +185,46 @@ except OSError:
     # e.g. read-only folder - fall back to the old behaviour rather
     # than failing the launch.
     _DATA_DIR_OK = False
+    RELAY_ROOT = TP_DIR
     DATA_DIR = TP_DIR
     GAME_CONFIG_DIR = TP_DIR
 
 LOG_PATH = os.path.join(DATA_DIR, "parrot_relay_log.txt")
-_LEGACY_LOG_PATH = os.path.join(TP_DIR, "parrot_relay_log.txt")
-if _DATA_DIR_OK and os.path.isfile(_LEGACY_LOG_PATH) and not os.path.exists(LOG_PATH):
-    # Keep the history from older versions that logged next to the exe.
-    try:
-        os.replace(_LEGACY_LOG_PATH, LOG_PATH)
-    except OSError:
-        pass
+GLOBAL_CONFIG_PATH = os.path.join(DATA_DIR, "ParrotRelay.cfg")
+
+
+def _migrate_old_locations() -> None:
+    """
+    Moves data written by earlier versions into RelayData: the log
+    file that used to sit next to the exe, and the log/GameConfigs
+    that used to sit among the runtime files. Best effort - a failed
+    move is never worth aborting a game launch for.
+    """
+    if not _DATA_DIR_OK:
+        return
+
+    for old_log in (os.path.join(TP_DIR, "parrot_relay_log.txt"),
+                    os.path.join(RELAY_ROOT, "parrot_relay_log.txt")):
+        if os.path.isfile(old_log) and not os.path.exists(LOG_PATH):
+            try:
+                os.replace(old_log, LOG_PATH)
+            except OSError:
+                pass
+
+    old_configs = os.path.join(RELAY_ROOT, "GameConfigs")
+    if os.path.isdir(old_configs) and os.path.abspath(old_configs) != \
+            os.path.abspath(GAME_CONFIG_DIR):
+        try:
+            for entry in os.listdir(old_configs):
+                target = os.path.join(GAME_CONFIG_DIR, entry)
+                if not os.path.exists(target):
+                    os.replace(os.path.join(old_configs, entry), target)
+            os.rmdir(old_configs)
+        except OSError:
+            pass
+
+
+_migrate_old_locations()
 
 USER_PROFILES_DIR = os.path.join(TP_DIR, "UserProfiles")
 LOADING_BG_DIR = os.path.join(TP_DIR, "LoadingBG")
@@ -324,6 +374,36 @@ def find_background_image(profile_name: str | None) -> str | None:
     return None
 
 
+def load_image_native_size(path: str):
+    """
+    Loads an image at its ORIGINAL SIZE (no scaling). Uses
+    Pillow if available (more supported formats), otherwise
+    Tkinter's own PhotoImage (PNG/GIF only).
+    """
+    ext = os.path.splitext(path)[1].lower()
+
+    if _PILLOW_AVAILABLE:
+        try:
+            img = Image.open(path)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            log("ERROR loading image with Pillow:\n"
+                + traceback.format_exc())
+            return None
+
+    if ext in NATIVE_IMAGE_EXTS:
+        try:
+            return tk.PhotoImage(file=path)
+        except Exception:
+            log("ERROR loading image without Pillow:\n"
+                + traceback.format_exc())
+            return None
+
+    log(f"Image format {ext} requires Pillow (not installed) - "
+        f"skipping image.")
+    return None
+
+
 class SplashScreen:
     """
     Own fullscreen loading screen (replacement for HyperOverlay's
@@ -336,11 +416,19 @@ class SplashScreen:
     root.after(), instead of running in a separate time.sleep loop.
     """
 
-    def __init__(self, game_name: str, bg_image_path: str | None):
+    def __init__(self, game_name: str, bg_image_path: str | None,
+                 visible: bool = True):
+        self.visible = visible
         self.root = tk.Tk()
         self.root.overrideredirect(True)  # no title bar/border
         self.root.attributes("-topmost", True)
         self.root.configure(bg="black")
+
+        # With the splash turned off the window still exists (it drives
+        # the monitoring loop via root.after) - it is simply never
+        # shown.
+        if not visible:
+            self.root.withdraw()
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -358,7 +446,7 @@ class SplashScreen:
         self._bg_photo = None
         image_h = 0
         if bg_image_path:
-            self._bg_photo = self._load_image_native_size(bg_image_path)
+            self._bg_photo = load_image_native_size(bg_image_path)
             if self._bg_photo:
                 image_h = self._bg_photo.height()
                 log(f"Image loaded (native size "
@@ -403,35 +491,6 @@ class SplashScreen:
         self.root.update_idletasks()
         self.root.update()
 
-    def _load_image_native_size(self, path: str):
-        """
-        Loads an image at its ORIGINAL SIZE (no scaling). Uses
-        Pillow if available (more supported formats), otherwise
-        Tkinter's own PhotoImage (PNG/GIF only).
-        """
-        ext = os.path.splitext(path)[1].lower()
-
-        if _PILLOW_AVAILABLE:
-            try:
-                img = Image.open(path)
-                return ImageTk.PhotoImage(img)
-            except Exception:
-                log("ERROR loading image with Pillow:\n"
-                    + traceback.format_exc())
-                return None
-
-        if ext in NATIVE_IMAGE_EXTS:
-            try:
-                return tk.PhotoImage(file=path)
-            except Exception:
-                log("ERROR loading image without Pillow:\n"
-                    + traceback.format_exc())
-                return None
-
-        log(f"Image format {ext} requires Pillow (not installed) - "
-            f"skipping image.")
-        return None
-
     def set_status(self, text: str) -> None:
         try:
             self.canvas.itemconfig(self.status_text_id, text=text)
@@ -444,6 +503,8 @@ class SplashScreen:
         after the game window appeared - otherwise the game window,
         which is already being drawn, would cover it.
         """
+        if not self.visible:
+            return
         try:
             self.root.attributes("-topmost", True)
             self.root.lift()
@@ -622,6 +683,74 @@ def _parse_delay_ms(raw: str, source: str) -> int | None:
     return value
 
 
+class Setting:
+    """
+    One configurable option. Kept as data rather than scattered
+    literals, because the same list drives three things: the defaults
+    used at runtime, the comments written into a fresh .cfg, and the
+    input fields in the settings window.
+    """
+
+    def __init__(self, key: str, kind: str, default, label: str,
+                 help_text: str, minimum: int = 0, maximum: int = 0):
+        self.key = key
+        self.kind = kind          # "bool", "int_ms" or "path"
+        self.default = default
+        self.label = label
+        self.help_text = help_text
+        self.minimum = minimum
+        self.maximum = maximum
+
+
+SETTINGS: tuple[Setting, ...] = (
+    Setting(
+        "splash_enabled", "bool", True,
+        "Show loading screen",
+        "Off: no loading screen for this game at all. The window\n"
+        "handling (hiding TeknoParrot's windows, focusing the game)\n"
+        "keeps working.",
+    ),
+    Setting(
+        "splash_extra_delay_ms", "int_ms", 0,
+        "Keep loading screen up for (ms)",
+        "How much longer the loading screen stays after the game\n"
+        "window appeared. For games that show their window early but\n"
+        "keep loading. Example: 4000 = four extra seconds.",
+        minimum=0, maximum=60_000,
+    ),
+    Setting(
+        "splash_timeout_ms", "int_ms", 0,
+        "Give up after (ms, 0 = never)",
+        "Safety net: if no game window shows up within this time,\n"
+        "the loading screen closes anyway instead of covering the\n"
+        "screen forever. 0 keeps waiting.",
+        minimum=0, maximum=600_000,
+    ),
+    Setting(
+        "background", "path", "",
+        "Background image",
+        "Overrides the automatic search in LoadingBG\\ and Icons\\.\n"
+        "Leave empty for the automatic choice.",
+    ),
+    Setting(
+        "focus_guard", "bool", True,
+        "Keep game window focused",
+        "Keeps pulling the game window back to the foreground if\n"
+        "something else steals focus. Turn off if it fights with the\n"
+        "game (rare, e.g. games with their own launcher window).",
+    ),
+    Setting(
+        "suppress_tp_windows", "bool", True,
+        "Hide TeknoParrot windows",
+        "Hides TeknoParrot's own windows before they can take focus.\n"
+        "This is the actual fix for games dropping out of exclusive\n"
+        "fullscreen - only turn it off for troubleshooting.",
+    ),
+)
+
+SETTINGS_BY_KEY = {setting.key: setting for setting in SETTINGS}
+
+
 def game_config_path(profile_name: str | None) -> str | None:
     """Path of the .cfg belonging to a profile, or None without one."""
     if not profile_name:
@@ -634,7 +763,7 @@ def game_config_path(profile_name: str | None) -> str | None:
     return os.path.join(GAME_CONFIG_DIR, f"{safe}.cfg")
 
 
-def read_game_config(path: str) -> dict[str, str]:
+def read_config_file(path: str) -> dict[str, str]:
     """
     Reads a simple "key=value" file. Lines starting with # or ; and
     blank lines are ignored, keys are lower-cased and trimmed. Kept
@@ -651,86 +780,762 @@ def read_game_config(path: str) -> dict[str, str]:
                 if not sep:
                     continue
                 values[key.strip().lower()] = value.strip()
+    except FileNotFoundError:
+        pass
     except OSError:
-        log(f"Could not read game config: {path}")
+        log(f"Could not read config: {path}")
     except Exception:
-        log("ERROR reading game config:\n" + traceback.format_exc())
+        log("ERROR reading config:\n" + traceback.format_exc())
     return values
 
 
-def write_default_game_config(path: str, profile_name: str,
-                              game_name: str, bg_image_path: str | None) -> None:
+def parse_setting_value(setting: Setting, raw: str, source: str):
     """
-    Creates the .cfg on a game's first launch, pre-filled with what
-    ParrotRelay knows about it. The settings block is written with
-    real (default) values, so tweaking a game only means editing a
-    number - no need to remember key names.
+    Turns a raw string from a .cfg into a real value. Anything
+    unparseable is logged and reported as None, so the caller falls
+    back to the next level instead of the launch failing over a typo.
     """
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    content = f"""# ParrotRelay - settings for "{game_name}"
-# Created automatically on {stamp}. Safe to edit; ParrotRelay only
-# reads the "key=value" lines below and ignores everything else.
-#
-# Detected on first launch:
-#   profile    = {profile_name}.xml
-#   game_name  = {game_name}
-#   background = {bg_image_path or "(none - plain black splash)"}
-#
-# ------------------------------------------------------------------
-# Settings
-# ------------------------------------------------------------------
-#
-# splash_extra_delay_ms
-#   How much longer the loading screen stays up AFTER the game window
-#   has appeared, in milliseconds. Useful for games that show their
-#   window early but keep loading (or flicker) for a few more
-#   seconds. Example: 4000 = four extra seconds.
-#   A --relay-delay=<ms> on the command line overrides this value.
-splash_extra_delay_ms={DEFAULT_SPLASH_EXTRA_DELAY_MS}
-"""
+    raw = raw.strip().strip('"')
+
+    if setting.kind == "bool":
+        if raw.lower() in ("1", "true", "yes", "on"):
+            return True
+        if raw.lower() in ("0", "false", "no", "off"):
+            return False
+        log(f"Ignoring invalid value for {setting.key} in {source} "
+            f"(expected true/false).")
+        return None
+
+    if setting.kind == "int_ms":
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            log(f"Ignoring invalid value for {setting.key} in {source} "
+                f"(expected a number in milliseconds).")
+            return None
+        if value < setting.minimum:
+            log(f"{setting.key} in {source} below {setting.minimum} - clamped.")
+            return setting.minimum
+        if value > setting.maximum:
+            log(f"{setting.key} in {source} above {setting.maximum} - clamped.")
+            return setting.maximum
+        return value
+
+    return raw  # "path" and anything else: taken as-is
+
+
+def format_setting_value(setting: Setting, value) -> str:
+    if setting.kind == "bool":
+        return "true" if value else "false"
+    return str(value)
+
+
+def render_config_file(values: dict, header_lines: list[str],
+                       active_keys: set[str] | None = None) -> str:
+    """
+    Renders a .cfg with the header, then every setting preceded by its
+    explanation. Written the same way for the global defaults and for
+    a game, so both files look familiar.
+
+    Keys not in active_keys are written as commented-out lines. That
+    is how inheritance stays intact: a game only pins what actually
+    differs, everything else keeps following the global defaults.
+    Passing None means "all keys active".
+    """
+    out = [f"# {line}" if line else "#" for line in header_lines]
+    out.append("#")
+    out.append("# " + "-" * 66)
+    out.append("# Settings")
+    out.append("# " + "-" * 66)
+
+    for setting in SETTINGS:
+        out.append("#")
+        out.append(f"# {setting.key}")
+        for help_line in setting.help_text.splitlines():
+            out.append(f"#   {help_line}")
+        value = values.get(setting.key, setting.default)
+        line = f"{setting.key}={format_setting_value(setting, value)}"
+        if active_keys is not None and setting.key not in active_keys:
+            out.append(f"#   (inherited - remove the # to pin it here)")
+            line = "#" + line
+        out.append(line)
+
+    return "\n".join(out) + "\n"
+
+
+def write_config_file(path: str, values: dict, header_lines: list[str],
+                      active_keys: set[str] | None = None) -> bool:
+    """Writes a .cfg, replacing an existing one. True on success."""
     try:
-        with open(path, "x", encoding="utf-8") as f:
-            f.write(content)
-        log(f"Game config created: {path}")
-    except FileExistsError:
-        pass
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(render_config_file(values, header_lines, active_keys))
+        return True
     except OSError:
-        log(f"Could not create game config: {path}")
+        log(f"Could not write config: {path}")
+        return False
 
 
-def resolve_splash_extra_delay(profile_name: str | None, game_name: str,
-                               bg_image_path: str | None,
-                               cli_delay_ms: int | None) -> int:
+def game_config_header(profile_name: str, game_name: str,
+                       bg_image_path: str | None) -> list[str]:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return [
+        f'ParrotRelay - settings for "{game_name}"',
+        f"Written on {stamp}. Safe to edit by hand; ParrotRelay only",
+        'reads the "key=value" lines and ignores everything else. The',
+        "settings window (start ParrotRelay.exe without arguments)",
+        "edits this file too.",
+        "",
+        "Detected for this game:",
+        f"  profile    = {profile_name}.xml",
+        f"  game_name  = {game_name}",
+        f"  background = {bg_image_path or '(none - plain black splash)'}",
+        "",
+        "Lines starting with # follow the global defaults in",
+        "..\\ParrotRelay.cfg - remove the # to pin a value for this",
+        "game only.",
+    ]
+
+
+def global_config_header() -> list[str]:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return [
+        "ParrotRelay - global defaults",
+        f"Written on {stamp}. These values apply to every game that",
+        "does not set them itself in GameConfigs\\<profile>.cfg.",
+    ]
+
+
+def resolve_settings(profile_name: str | None, game_name: str,
+                     bg_image_path: str | None,
+                     cli_delay_ms: int | None) -> dict:
     """
-    Determines how long the splash lingers after the game window
-    showed up, and makes sure the game's .cfg exists.
+    Builds the effective settings for this launch and makes sure the
+    game's .cfg exists.
 
-    Precedence: command line > .cfg > built-in default. The command
-    line wins because it is the more specific, per-launch statement
-    (e.g. one HyperSpin entry that needs extra time).
+    Precedence, most specific first:
+        command line  >  game .cfg  >  global .cfg  >  built-in default
+
+    The command line wins because it is the per-launch statement (one
+    HyperSpin entry that needs more time), the game file beats the
+    global one for the obvious reason.
     """
+    values = {setting.key: setting.default for setting in SETTINGS}
+    sources = {setting.key: "default" for setting in SETTINGS}
+
+    def apply(raw_values: dict[str, str], source_label: str) -> None:
+        for key, raw in raw_values.items():
+            setting = SETTINGS_BY_KEY.get(key)
+            if setting is None:
+                continue  # unknown key - leave it alone, it's the user's file
+            parsed = parse_setting_value(setting, raw, source_label)
+            if parsed is not None:
+                values[key] = parsed
+                sources[key] = source_label
+
+    if os.path.isfile(GLOBAL_CONFIG_PATH):
+        apply(read_config_file(GLOBAL_CONFIG_PATH), "ParrotRelay.cfg")
+
     path = game_config_path(profile_name)
-    if path is not None and not os.path.isfile(path):
-        write_default_game_config(path, profile_name or "?", game_name,
-                                  bg_image_path)
-
-    cfg_delay_ms: int | None = None
-    if path is not None and os.path.isfile(path):
-        cfg = read_game_config(path)
-        if "splash_extra_delay_ms" in cfg:
-            cfg_delay_ms = _parse_delay_ms(
-                cfg["splash_extra_delay_ms"],
-                source=f"{os.path.basename(path)} (splash_extra_delay_ms)",
-            )
+    if path is not None:
+        if not os.path.isfile(path):
+            # Fresh file: every value is still inherited, so nothing is
+            # pinned yet - the file documents the options and shows
+            # what is currently in effect.
+            if write_config_file(path, values,
+                                 game_config_header(profile_name or "?",
+                                                    game_name, bg_image_path),
+                                 active_keys=set()):
+                log(f"Game config created: {path}")
+        else:
+            apply(read_config_file(path), os.path.basename(path))
 
     if cli_delay_ms is not None:
-        log(f"Splash extra delay: {cli_delay_ms} ms (from command line)")
-        return cli_delay_ms
-    if cfg_delay_ms is not None:
-        log(f"Splash extra delay: {cfg_delay_ms} ms (from game config)")
-        return cfg_delay_ms
-    return DEFAULT_SPLASH_EXTRA_DELAY_MS
+        values["splash_extra_delay_ms"] = cli_delay_ms
+        sources["splash_extra_delay_ms"] = "command line"
 
+    for setting in SETTINGS:
+        if sources[setting.key] != "default":
+            log(f"Setting {setting.key} = "
+                f"{format_setting_value(setting, values[setting.key])} "
+                f"(from {sources[setting.key]})")
+
+    return values
+
+
+# ---------------------------------------------------------------------
+# Settings window (shown when started without arguments)
+# ---------------------------------------------------------------------
+
+def list_known_games() -> list[tuple[str, str]]:
+    """
+    Every game the settings window can offer: all TeknoParrot user
+    profiles, plus profiles that only exist as a ParrotRelay config
+    (e.g. a game removed from TP again). Returns (profile, game name)
+    sorted by game name.
+    """
+    profiles: set[str] = set()
+
+    for directory, suffix in ((USER_PROFILES_DIR, ".xml"),
+                              (GAME_CONFIG_DIR, ".cfg")):
+        try:
+            for entry in os.listdir(directory):
+                if entry.lower().endswith(suffix):
+                    profiles.add(entry[: -len(suffix)])
+        except OSError:
+            pass
+
+    games = [(profile, lookup_game_name(profile)) for profile in profiles]
+    games.sort(key=lambda item: item[1].lower())
+    return games
+
+
+def open_in_explorer(path: str) -> None:
+    """Opens a file or folder in Explorer. Windows-only, by design."""
+    try:
+        os.startfile(path)  # type: ignore[attr-defined]
+    except Exception:
+        log(f"Could not open: {path}\n" + traceback.format_exc())
+
+
+class SettingsWindow:
+    """
+    The window that comes up when ParrotRelay.exe is started without
+    arguments - i.e. by double-clicking it, rather than by HyperSpin.
+
+    Edits the same .cfg files that can be edited by hand: the global
+    defaults on the left-hand entry, one file per game below it. A
+    game only stores what actually differs from the global defaults,
+    so changing a default still reaches every game that never
+    overrode it.
+    """
+
+    GLOBAL_ITEM = "— Global defaults —"
+
+    def __init__(self) -> None:
+        from tkinter import ttk
+
+        self.root = tk.Tk()
+        self.root.title("ParrotRelay - Settings")
+        self.root.geometry("980x620")
+        self.root.minsize(820, 520)
+        try:
+            icon = os.path.join(TP_DIR, "icon.ico")
+            if os.path.isfile(icon):
+                self.root.iconbitmap(icon)
+        except tk.TclError:
+            pass
+
+        # Created in _build_layout; the search box's change callback can
+        # fire before that, so it must be able to tell.
+        self.tree = None
+        self.games = list_known_games()
+        self.current_profile: str | None = None   # None = global defaults
+        self.vars: dict[str, tk.Variable] = {}
+        self.dirty = False
+
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("vista")
+        except tk.TclError:
+            pass
+
+        self._build_layout()
+        self._refresh_game_list()
+        self._select_global()
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # -- layout --------------------------------------------------------
+
+    def _build_layout(self) -> None:
+        from tkinter import ttk
+
+        outer = ttk.Frame(self.root, padding=10)
+        outer.pack(fill="both", expand=True)
+
+        panes = ttk.PanedWindow(outer, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+
+        # Left: search + game list
+        left = ttk.Frame(panes, padding=(0, 0, 8, 0))
+        panes.add(left, weight=1)
+
+        ttk.Label(left, text="Game").pack(anchor="w")
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", lambda *_: self._refresh_game_list())
+        search = ttk.Entry(left, textvariable=self.search_var)
+        search.pack(fill="x", pady=(2, 6))
+        self._add_placeholder(search, "Search...")
+
+        list_frame = ttk.Frame(left)
+        list_frame.pack(fill="both", expand=True)
+
+        self.tree = ttk.Treeview(
+            list_frame, columns=("configured",), show="tree headings",
+            selectmode="browse",
+        )
+        self.tree.heading("#0", text="Game")
+        self.tree.heading("configured", text="Configured")
+        self.tree.column("#0", width=250)
+        self.tree.column("configured", width=90, anchor="center", stretch=False)
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(list_frame, orient="vertical",
+                               command=self.tree.yview)
+        scroll.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        # Right: the settings for whatever is selected
+        right = ttk.Frame(panes, padding=(8, 0, 0, 0))
+        panes.add(right, weight=2)
+
+        self.title_var = tk.StringVar()
+        title = ttk.Label(right, textvariable=self.title_var,
+                          font=("Segoe UI", 13, "bold"))
+        title.pack(anchor="w")
+
+        self.subtitle_var = tk.StringVar()
+        ttk.Label(right, textvariable=self.subtitle_var,
+                  foreground="#555555").pack(anchor="w", pady=(0, 10))
+
+        self.form = ttk.Frame(right)
+        self.form.pack(fill="both", expand=True)
+        self._build_form()
+
+        # Buttons for the current entry
+        actions = ttk.Frame(right)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Save",
+                   command=self._save).pack(side="left")
+        ttk.Button(actions, text="Revert",
+                   command=self._load_current).pack(side="left", padx=6)
+        self.inherit_button = ttk.Button(
+            actions, text="Use global defaults", command=self._inherit_all)
+        self.inherit_button.pack(side="left")
+        ttk.Button(actions, text="Preview loading screen",
+                   command=self._preview).pack(side="right")
+
+        # Global footer
+        footer = ttk.Frame(outer)
+        footer.pack(fill="x", pady=(10, 0))
+        ttk.Separator(outer, orient="horizontal").pack(
+            fill="x", before=footer, pady=(6, 6))
+
+        ttk.Button(footer, text="Open RelayData folder",
+                   command=lambda: open_in_explorer(DATA_DIR)).pack(side="left")
+        ttk.Button(footer, text="Open log",
+                   command=self._open_log).pack(side="left", padx=6)
+        ttk.Button(footer, text="Apply to all games...",
+                   command=self._apply_to_all).pack(side="left")
+        ttk.Button(footer, text="Close",
+                   command=self._on_close).pack(side="right")
+
+        self.status_var = tk.StringVar(value=self._environment_summary())
+        ttk.Label(outer, textvariable=self.status_var,
+                  foreground="#555555").pack(anchor="w", pady=(8, 0))
+
+    def _build_form(self) -> None:
+        from tkinter import ttk
+
+        for row, setting in enumerate(SETTINGS):
+            ttk.Label(self.form, text=setting.label).grid(
+                row=row * 2, column=0, sticky="w", pady=(6, 0))
+
+            if setting.kind == "bool":
+                var: tk.Variable = tk.BooleanVar()
+                widget = ttk.Checkbutton(self.form, variable=var,
+                                         command=self._mark_dirty)
+                widget.grid(row=row * 2, column=1, sticky="w", pady=(6, 0))
+            elif setting.kind == "int_ms":
+                var = tk.StringVar()
+                var.trace_add("write", lambda *_: self._mark_dirty())
+                widget = ttk.Spinbox(
+                    self.form, textvariable=var, width=12,
+                    from_=setting.minimum, to=setting.maximum, increment=500,
+                )
+                widget.grid(row=row * 2, column=1, sticky="w", pady=(6, 0))
+            else:
+                var = tk.StringVar()
+                var.trace_add("write", lambda *_: self._mark_dirty())
+                box = ttk.Frame(self.form)
+                box.grid(row=row * 2, column=1, sticky="ew", pady=(6, 0))
+                ttk.Entry(box, textvariable=var, width=44).pack(
+                    side="left", fill="x", expand=True)
+                ttk.Button(box, text="Browse...", width=10,
+                           command=self._browse_background).pack(
+                    side="left", padx=(6, 0))
+
+            ttk.Label(self.form, text=setting.help_text,
+                      foreground="#555555").grid(
+                row=row * 2 + 1, column=0, columnspan=2, sticky="w")
+
+            self.vars[setting.key] = var
+
+        self.form.columnconfigure(1, weight=1)
+
+    def _add_placeholder(self, entry, text: str) -> None:
+        """Grey hint text that disappears on focus. Purely cosmetic."""
+        def on_focus_in(_):
+            if entry.get() == text:
+                entry.delete(0, "end")
+                entry.configure(foreground="")
+
+        def on_focus_out(_):
+            if not entry.get():
+                entry.insert(0, text)
+                entry.configure(foreground="#888888")
+
+        entry.insert(0, text)
+        entry.configure(foreground="#888888")
+        entry.bind("<FocusIn>", on_focus_in)
+        entry.bind("<FocusOut>", on_focus_out)
+        self._search_placeholder = text
+
+    # -- data ----------------------------------------------------------
+
+    def _search_text(self) -> str:
+        text = self.search_var.get().strip()
+        if text == getattr(self, "_search_placeholder", None):
+            return ""
+        return text.lower()
+
+    def _refresh_game_list(self) -> None:
+        if self.tree is None:
+            return
+        needle = self._search_text()
+        selected = self.current_profile
+
+        self.tree.delete(*self.tree.get_children())
+        self.tree.insert("", "end", iid="__global__", text=self.GLOBAL_ITEM,
+                         values=("",))
+
+        for profile, name in self.games:
+            if needle and needle not in name.lower() and \
+                    needle not in profile.lower():
+                continue
+            path = game_config_path(profile)
+            pinned = ""
+            if path and os.path.isfile(path):
+                pinned = str(len(self._pinned_keys(path))) or ""
+                pinned = pinned if pinned != "0" else "-"
+            self.tree.insert("", "end", iid=profile,
+                             text=f"{name}  ({profile})", values=(pinned,))
+
+        target = selected if selected and self.tree.exists(selected) \
+            else "__global__"
+        self.tree.selection_set(target)
+
+    def _pinned_keys(self, path: str) -> set[str]:
+        """Keys a game's file actually pins (i.e. non-commented)."""
+        return {key for key in read_config_file(path) if key in SETTINGS_BY_KEY}
+
+    def _global_values(self) -> dict:
+        values = {setting.key: setting.default for setting in SETTINGS}
+        for key, raw in read_config_file(GLOBAL_CONFIG_PATH).items():
+            setting = SETTINGS_BY_KEY.get(key)
+            if setting is None:
+                continue
+            parsed = parse_setting_value(setting, raw, "ParrotRelay.cfg")
+            if parsed is not None:
+                values[key] = parsed
+        return values
+
+    def _effective_values(self, profile: str | None) -> dict:
+        values = self._global_values()
+        if profile is None:
+            return values
+        path = game_config_path(profile)
+        if path and os.path.isfile(path):
+            for key, raw in read_config_file(path).items():
+                setting = SETTINGS_BY_KEY.get(key)
+                if setting is None:
+                    continue
+                parsed = parse_setting_value(setting, raw,
+                                             os.path.basename(path))
+                if parsed is not None:
+                    values[key] = parsed
+        return values
+
+    # -- selection / loading -------------------------------------------
+
+    def _on_select(self, _event=None) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            return
+        if self.dirty and not self._confirm_discard():
+            # Put the selection back where it was.
+            target = self.current_profile or "__global__"
+            if self.tree.exists(target):
+                self.tree.selection_set(target)
+            return
+
+        item = selection[0]
+        self.current_profile = None if item == "__global__" else item
+        self._load_current()
+
+    def _select_global(self) -> None:
+        self.current_profile = None
+        self.tree.selection_set("__global__")
+        self._load_current()
+
+    def _load_current(self) -> None:
+        profile = self.current_profile
+        values = self._effective_values(profile)
+
+        for setting in SETTINGS:
+            var = self.vars[setting.key]
+            if setting.kind == "bool":
+                var.set(bool(values[setting.key]))
+            else:
+                var.set(str(values[setting.key]))
+
+        if profile is None:
+            self.title_var.set("Global defaults")
+            self.subtitle_var.set(
+                f"Applies to every game that does not override it  -  "
+                f"{GLOBAL_CONFIG_PATH}")
+            self.inherit_button.state(["disabled"])
+        else:
+            name = dict(self.games).get(profile, profile)
+            path = game_config_path(profile) or "?"
+            pinned = self._pinned_keys(path) if os.path.isfile(path) else set()
+            bg = find_background_image(profile)
+            self.title_var.set(name)
+            self.subtitle_var.set(
+                f"Profile {profile}.xml   -   "
+                f"{len(pinned)} of {len(SETTINGS)} settings set for this game"
+                f"   -   background: {bg or 'none found'}")
+            self.inherit_button.state(["!disabled"])
+
+        self.dirty = False
+
+    def _mark_dirty(self) -> None:
+        self.dirty = True
+
+    # -- actions -------------------------------------------------------
+
+    def _collect_values(self) -> dict | None:
+        from tkinter import messagebox
+
+        values = {}
+        for setting in SETTINGS:
+            raw = self.vars[setting.key].get()
+            if setting.kind == "bool":
+                values[setting.key] = bool(raw)
+                continue
+            if setting.kind == "int_ms":
+                try:
+                    number = int(float(str(raw).strip() or 0))
+                except ValueError:
+                    messagebox.showerror(
+                        "ParrotRelay",
+                        f"{setting.label}: \"{raw}\" is not a number.",
+                        parent=self.root)
+                    return None
+                if not setting.minimum <= number <= setting.maximum:
+                    messagebox.showerror(
+                        "ParrotRelay",
+                        f"{setting.label}: must be between "
+                        f"{setting.minimum} and {setting.maximum}.",
+                        parent=self.root)
+                    return None
+                values[setting.key] = number
+                continue
+            values[setting.key] = str(raw).strip()
+        return values
+
+    def _save(self) -> None:
+        from tkinter import messagebox
+
+        values = self._collect_values()
+        if values is None:
+            return
+
+        if self.current_profile is None:
+            ok = write_config_file(GLOBAL_CONFIG_PATH, values,
+                                   global_config_header())
+            target = GLOBAL_CONFIG_PATH
+        else:
+            profile = self.current_profile
+            # Only pin what actually differs from the global defaults,
+            # so a later change to those still reaches this game.
+            inherited = self._global_values()
+            active = {key for key, value in values.items()
+                      if value != inherited[key]}
+            name = dict(self.games).get(profile, profile)
+            ok = write_config_file(
+                game_config_path(profile), values,
+                game_config_header(profile, name,
+                                   find_background_image(profile)),
+                active_keys=active)
+            target = game_config_path(profile) or "?"
+
+        if not ok:
+            messagebox.showerror(
+                "ParrotRelay", f"Could not write:\n{target}",
+                parent=self.root)
+            return
+
+        self.dirty = False
+        self._refresh_game_list()
+        self._load_current()
+        self.status_var.set(f"Saved: {target}")
+
+    def _inherit_all(self) -> None:
+        """Drops every value pinned for this game."""
+        from tkinter import messagebox
+
+        profile = self.current_profile
+        if profile is None:
+            return
+        name = dict(self.games).get(profile, profile)
+        if not messagebox.askyesno(
+                "ParrotRelay",
+                f"Drop all settings stored for \"{name}\" and follow the "
+                f"global defaults again?", parent=self.root):
+            return
+
+        values = self._global_values()
+        write_config_file(game_config_path(profile), values,
+                          game_config_header(profile, name,
+                                             find_background_image(profile)),
+                          active_keys=set())
+        self._refresh_game_list()
+        self._load_current()
+        self.status_var.set(f"\"{name}\" follows the global defaults again")
+
+    def _apply_to_all(self) -> None:
+        """
+        Writes the values currently shown to every listed game. Handy
+        for a cabinet where all games want the same extra delay.
+        """
+        from tkinter import messagebox
+
+        values = self._collect_values()
+        if values is None:
+            return
+        if not messagebox.askyesno(
+                "ParrotRelay",
+                f"Write these settings to all {len(self.games)} games?\n\n"
+                f"This overwrites what is stored for each game.",
+                parent=self.root):
+            return
+
+        inherited = self._global_values()
+        active = {key for key, value in values.items()
+                  if value != inherited[key]}
+        written = 0
+        for profile, name in self.games:
+            if write_config_file(
+                    game_config_path(profile), values,
+                    game_config_header(profile, name,
+                                       find_background_image(profile)),
+                    active_keys=active):
+                written += 1
+
+        self._refresh_game_list()
+        self._load_current()
+        self.status_var.set(f"Settings written to {written} games")
+
+    def _browse_background(self) -> None:
+        from tkinter import filedialog
+
+        exts = NATIVE_IMAGE_EXTS + (PILLOW_IMAGE_EXTS if _PILLOW_AVAILABLE
+                                    else ())
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Choose background image",
+            initialdir=LOADING_BG_DIR if os.path.isdir(LOADING_BG_DIR)
+            else TP_DIR,
+            filetypes=[("Images", " ".join(f"*{ext}" for ext in exts)),
+                       ("All files", "*.*")],
+        )
+        if path:
+            self.vars["background"].set(os.path.normpath(path))
+
+    def _preview(self) -> None:
+        """
+        Shows the loading screen exactly as it will look at launch,
+        for three seconds - the quickest way to check whether the
+        background image is the right one.
+        """
+        values = self._collect_values()
+        if values is None:
+            return
+
+        profile = self.current_profile
+        name = dict(self.games).get(profile, "Game") if profile else "Game"
+        background = values["background"].strip() or \
+            (find_background_image(profile) if profile else None)
+
+        preview = tk.Toplevel(self.root)
+        preview.overrideredirect(True)
+        preview.attributes("-topmost", True)
+        preview.configure(bg="black")
+        width = preview.winfo_screenwidth()
+        height = preview.winfo_screenheight()
+        preview.geometry(f"{width}x{height}+0+0")
+
+        canvas = tk.Canvas(preview, width=width, height=height, bg="black",
+                           highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        photo = None
+        if background and os.path.isfile(background):
+            photo = load_image_native_size(background)
+        offset = 0
+        if photo:
+            offset = photo.height() // 2 + 20
+            canvas.create_image(width // 2, height // 2 - 40, image=photo,
+                                anchor="center")
+        canvas.create_text(width // 2, height // 2 + offset, text=name,
+                           fill="white", font=("Segoe UI", 40, "bold"))
+        canvas.create_text(width // 2, height // 2 + offset + 60,
+                           text="Loading...  (preview closes in 3 s)",
+                           fill="#cccccc", font=("Segoe UI", 18))
+        preview.bind("<Escape>", lambda _: preview.destroy())
+        preview.after(3000, preview.destroy)
+        preview._photo = photo  # keep a reference alive
+
+    def _open_log(self) -> None:
+        from tkinter import messagebox
+
+        if not os.path.isfile(LOG_PATH):
+            messagebox.showinfo(
+                "ParrotRelay",
+                "No log yet - it is written the first time a game is "
+                "launched through ParrotRelay.", parent=self.root)
+            return
+        open_in_explorer(LOG_PATH)
+
+    def _environment_summary(self) -> str:
+        tp = "TeknoParrotUi.exe found" if os.path.isfile(TP_EXE) \
+            else "WARNING: TeknoParrotUi.exe NOT found next to ParrotRelay.exe"
+        return (f"{tp}   |   {len(self.games)} games   |   "
+                f"data: {DATA_DIR}")
+
+    def _confirm_discard(self) -> bool:
+        from tkinter import messagebox
+        return messagebox.askyesno(
+            "ParrotRelay", "Discard unsaved changes?", parent=self.root)
+
+    def _on_close(self) -> None:
+        if self.dirty and not self._confirm_discard():
+            return
+        self.root.destroy()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def run_settings_gui() -> None:
+    log("Started without arguments - opening the settings window")
+    try:
+        SettingsWindow().run()
+    except Exception:
+        log("ERROR in the settings window:\n" + traceback.format_exc())
+        raise
 
 
 # ---------------------------------------------------------------------
@@ -955,7 +1760,7 @@ def main() -> None:
     log(f"Runtime  = {describe_runtime_mode()}")
     cleanup_stale_runtime_dirs()
 
-    if not os.path.isfile(TP_EXE):
+    if not os.path.isfile(TP_EXE) and sys.argv[1:]:
         log(f"ERROR: {TP_EXE} not found - aborting.")
         ctypes.windll.user32.MessageBoxW(
             0,
@@ -968,11 +1773,29 @@ def main() -> None:
     # Our own arguments are stripped here - TeknoParrot must never
     # see them, it would reject the unknown switch.
     args, cli_delay_ms = split_relay_args(sys.argv[1:])
+
+    # Started by hand (double-click) rather than by HyperSpin: there is
+    # no game to launch, so show the settings window instead.
+    if not args:
+        run_settings_gui()
+        return
     profile_name = extract_profile_name(args)
     game_name = lookup_game_name(profile_name)
     bg_image_path = find_background_image(profile_name)
-    splash_extra_delay_ms = resolve_splash_extra_delay(
-        profile_name, game_name, bg_image_path, cli_delay_ms)
+    settings = resolve_settings(profile_name, game_name, bg_image_path,
+                                cli_delay_ms)
+
+    # An explicit background from the config wins over the automatic
+    # search - that's the whole point of the setting.
+    configured_bg = settings["background"].strip()
+    if configured_bg:
+        if os.path.isfile(configured_bg):
+            bg_image_path = configured_bg
+        else:
+            log(f"Configured background not found: {configured_bg}")
+
+    splash_extra_delay_ms = settings["splash_extra_delay_ms"]
+    splash_timeout_ms = settings["splash_timeout_ms"]
 
     try:
         proc = subprocess.Popen(
@@ -987,9 +1810,14 @@ def main() -> None:
     tp_pid = proc.pid
     log(f"TeknoParrotUi.exe started, PID={tp_pid}")
 
-    splash = SplashScreen(game_name, bg_image_path)
-    log(f"Splash screen shown for '{game_name}' "
-        f"(profile: {profile_name or '?'})")
+    splash = SplashScreen(game_name, bg_image_path,
+                          visible=settings["splash_enabled"])
+    if settings["splash_enabled"]:
+        log(f"Splash screen shown for '{game_name}' "
+            f"(profile: {profile_name or '?'})")
+    else:
+        log(f"Splash screen disabled for '{game_name}' "
+            f"(profile: {profile_name or '?'}) - window handling only")
 
     # Shared state for the recurring tick callback. A dict instead of
     # individual nonlocal variables, because tick() is a nested
@@ -1005,6 +1833,9 @@ def main() -> None:
         # the game window is found; with a delay of 0 that moment is
         # "right now", so the behaviour is unchanged by default.
         "splash_close_at": None,
+        # Deadline for the "no game window ever showed up" safety net.
+        "give_up_at": (time.monotonic() + splash_timeout_ms / 1000.0
+                       if splash_timeout_ms > 0 else None),
     }
 
     def tick() -> None:
@@ -1018,7 +1849,7 @@ def main() -> None:
 
         # 1) Actively hide TP-owned windows (main window, "Game is
         #    running") BEFORE they can ever take focus/foreground.
-        if tp_launcher_running:
+        if tp_launcher_running and settings["suppress_tp_windows"]:
             tp_windows = find_tp_own_windows(tp_pid)
             for hwnd in tp_windows:
                 changed = suppress_window(hwnd)
@@ -1064,7 +1895,7 @@ def main() -> None:
                     # the game yet - that happens once it's gone.
                     splash.keep_on_top()
 
-            if state["splash_closed"]:
+            if state["splash_closed"] and settings["focus_guard"]:
                 if win32gui.GetForegroundWindow() != hwnd:
                     if hwnd != state["last_focused_hwnd"]:
                         log(f"New target window detected: {describe_hwnd(hwnd)}")
@@ -1077,6 +1908,15 @@ def main() -> None:
                 splash.set_status("Loading...")
             else:
                 splash.set_status("Starting...")
+
+            # Safety net: never leave the screen covered forever if a
+            # game window simply never appears.
+            if state["give_up_at"] is not None and \
+                    time.monotonic() >= state["give_up_at"]:
+                splash.close()
+                state["splash_closed"] = True
+                log(f"No game window after {splash_timeout_ms} ms - "
+                    f"loading screen closed (splash_timeout_ms).")
 
         # Exit condition: launcher gone AND (either no game was ever
         # detected, OR the detected game is provably no longer
