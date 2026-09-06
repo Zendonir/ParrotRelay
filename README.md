@@ -39,6 +39,37 @@ The filename (without extension) must exactly match the profile name from `--pro
 
 If no custom image is found, ParrotRelay automatically falls back to TeknoParrot's own icon (`Icons\<profile>.png`), if present.
 
+## Loading screen delay (optional)
+
+By default the loading screen disappears the moment the game window is found. Games that create their window early but keep loading afterwards can keep it up longer.
+
+Per launch, straight from the HyperSpin command line (milliseconds):
+
+```
+--startMinimized --profile=%rom.filename%.xml --relay-delay=4000
+```
+
+`--relaydelay=` and `--splash-delay=` are accepted as well. The switch is consumed by ParrotRelay and never forwarded to TeknoParrot.
+
+Per game, permanently, in the game's config file:
+
+```
+splash_extra_delay_ms=4000
+```
+
+Command line beats the config file, the config file beats the default (`0`). Values are capped at 60000 ms.
+
+## Data folder and per-game configs
+
+On first start ParrotRelay creates a `ParrotRelay` folder next to the exe:
+
+```
+D:\ROM\TeknoParrot\ParrotRelay\parrot_relay_log.txt
+D:\ROM\TeknoParrot\ParrotRelay\GameConfigs\BBCF.cfg
+```
+
+The first time a game is launched, a `.cfg` is written for it containing what was detected (profile, game name, background image) plus the settings block. From then on the file is yours — edit it and ParrotRelay picks the values up on the next launch. It is never overwritten once it exists.
+
 ## Building from source
 
 ```bash
@@ -50,7 +81,7 @@ The finished `ParrotRelay.exe` will be in `dist\`.
 
 ## Logging
 
-`parrot_relay_log.txt` is created next to the exe and appended to on every run — useful for debugging which window was detected/suppressed/focused and when.
+`ParrotRelay\parrot_relay_log.txt` is created on first start and appended to on every run — useful for debugging which window was detected/suppressed/focused and when.
 
 ## License
 

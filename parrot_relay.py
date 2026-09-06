@@ -65,12 +65,38 @@ Copy the finished ParrotRelay.exe from dist\ to D:\ROM\TeknoParrot\
 HyperSpin 2 configuration:
     Platform Path: D:\ROM\TeknoParrot\ParrotRelay.exe
     Command Line:  --startMinimized --profile=%rom.filename%.xml
-    (unchanged - the proxy passes it through 1:1)
+    (unchanged - the proxy passes it through 1:1; only ParrotRelay's
+    own --relay-delay= switch, see below, is filtered out)
 
-Log:
-    parrot_relay_log.txt is created in the same folder as the exe and
-    appended to on every run (not overwritten), so multiple runs can
-    be compared afterwards.
+Loading screen delay (optional):
+    By default the splash disappears the moment the game window is
+    found. Games that create their window early but keep loading
+    afterwards can keep it up longer, in milliseconds:
+
+      - per launch, from HyperSpin:
+            --relay-delay=4000
+        (also accepted: --relaydelay= / --splash-delay=). The switch
+        is consumed by ParrotRelay and never forwarded to TP.
+      - per game, permanently:
+            ParrotRelay\GameConfigs\<profile>.cfg
+            splash_extra_delay_ms=4000
+
+    Command line beats the .cfg, the .cfg beats the default (0).
+    Values are capped at 60000 ms.
+
+Data folder and per-game configs:
+    On first start a "ParrotRelay" folder is created next to the exe:
+
+      ParrotRelay\parrot_relay_log.txt   - the log (appended, not
+          overwritten, so multiple runs can be compared). A log file
+          from an older version still sitting next to the exe is
+          moved here automatically.
+      ParrotRelay\GameConfigs\<profile>.cfg - written the first time
+          a game is launched, containing what was detected for it
+          (profile, game name, background image) plus the settings
+          block. The file is yours afterwards: edit it, and
+          ParrotRelay picks the values up on the next launch. It is
+          never overwritten once it exists.
 """
 
 import sys
@@ -108,7 +134,32 @@ else:
     TP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TP_EXE = os.path.join(TP_DIR, "TeknoParrotUi.exe")
-LOG_PATH = os.path.join(TP_DIR, "parrot_relay_log.txt")
+
+# Own data folder next to the exe. Created on first start; holds the
+# log file and one .cfg per game. Everything ParrotRelay writes lives
+# here, so TeknoParrot's own folder stays clean.
+DATA_DIR = os.path.join(TP_DIR, "ParrotRelay")
+GAME_CONFIG_DIR = os.path.join(DATA_DIR, "GameConfigs")
+
+try:
+    os.makedirs(GAME_CONFIG_DIR, exist_ok=True)
+    _DATA_DIR_OK = True
+except OSError:
+    # e.g. read-only folder - fall back to the old behaviour rather
+    # than failing the launch.
+    _DATA_DIR_OK = False
+    DATA_DIR = TP_DIR
+    GAME_CONFIG_DIR = TP_DIR
+
+LOG_PATH = os.path.join(DATA_DIR, "parrot_relay_log.txt")
+_LEGACY_LOG_PATH = os.path.join(TP_DIR, "parrot_relay_log.txt")
+if _DATA_DIR_OK and os.path.isfile(_LEGACY_LOG_PATH) and not os.path.exists(LOG_PATH):
+    # Keep the history from older versions that logged next to the exe.
+    try:
+        os.replace(_LEGACY_LOG_PATH, LOG_PATH)
+    except OSError:
+        pass
+
 USER_PROFILES_DIR = os.path.join(TP_DIR, "UserProfiles")
 LOADING_BG_DIR = os.path.join(TP_DIR, "LoadingBG")
 ICONS_DIR = os.path.join(TP_DIR, "Icons")
@@ -128,6 +179,14 @@ POLL_INTERVAL = 0.05
 # own small "Game is running" window) don't accidentally get treated
 # as "the game window". Adjust if needed.
 MIN_WINDOW_AREA = 200 * 150
+
+# How long the splash stays up AFTER the game window was found, in
+# milliseconds. 0 = old behaviour (close immediately). Overridable
+# per game via the .cfg file and per launch via --relay-delay=<ms>.
+DEFAULT_SPLASH_EXTRA_DELAY_MS = 0
+# Sanity cap so a typo like --relay-delay=400000 can't freeze the
+# cabinet behind a splash screen for minutes.
+MAX_SPLASH_EXTRA_DELAY_MS = 60_000
 
 
 def build_child_environment() -> dict[str, str]:
@@ -363,6 +422,18 @@ class SplashScreen:
         except tk.TclError:
             pass
 
+    def keep_on_top(self) -> None:
+        """
+        Re-asserts topmost while the splash is deliberately kept up
+        after the game window appeared - otherwise the game window,
+        which is already being drawn, would cover it.
+        """
+        try:
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+        except tk.TclError:
+            pass
+
     def close(self) -> None:
         try:
             self.root.destroy()
@@ -389,6 +460,179 @@ def is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------
+# Own command line arguments and per-game config files
+# ---------------------------------------------------------------------
+
+# Accepted spellings for the launch-time delay override. Everything
+# that is NOT one of ours is forwarded to TeknoParrotUi.exe untouched.
+_RELAY_DELAY_ARG_NAMES = ("relay-delay", "relaydelay", "splash-delay")
+
+
+def split_relay_args(args: list[str]) -> tuple[list[str], int | None]:
+    """
+    Separates ParrotRelay's own arguments from those meant for
+    TeknoParrot.
+
+    Currently supported (all equivalent, value in milliseconds):
+        --relay-delay=4000   --relaydelay=4000   --splash-delay=4000
+
+    Returns (args_for_teknoparrot, delay_ms_or_None). An unparseable
+    or out-of-range value is logged and ignored instead of aborting
+    the launch - a broken HyperSpin command line should never stop a
+    game from starting.
+    """
+    forwarded: list[str] = []
+    delay_ms: int | None = None
+
+    for arg in args:
+        m = re.match(r"--(" + "|".join(_RELAY_DELAY_ARG_NAMES) + r")=(.*)$",
+                     arg, re.IGNORECASE)
+        if not m:
+            forwarded.append(arg)
+            continue
+
+        raw = m.group(2).strip().strip('"')
+        parsed = _parse_delay_ms(raw, source=arg)
+        if parsed is not None:
+            delay_ms = parsed
+
+    return forwarded, delay_ms
+
+
+def _parse_delay_ms(raw: str, source: str) -> int | None:
+    """
+    Parses a delay value in milliseconds and clamps it to
+    0..MAX_SPLASH_EXTRA_DELAY_MS. Returns None if it isn't a number.
+    """
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        log(f"Ignoring invalid delay value in '{source}' "
+            f"(expected a number in milliseconds).")
+        return None
+
+    if value < 0:
+        log(f"Negative delay in '{source}' - using 0.")
+        return 0
+    if value > MAX_SPLASH_EXTRA_DELAY_MS:
+        log(f"Delay in '{source}' exceeds the maximum of "
+            f"{MAX_SPLASH_EXTRA_DELAY_MS} ms - capped.")
+        return MAX_SPLASH_EXTRA_DELAY_MS
+    return value
+
+
+def game_config_path(profile_name: str | None) -> str | None:
+    """Path of the .cfg belonging to a profile, or None without one."""
+    if not profile_name:
+        return None
+    # Profile names come from a filename on disk, but be strict anyway
+    # so a crafted --profile= can't write outside GameConfigs.
+    safe = os.path.basename(profile_name)
+    if not safe or safe in (".", ".."):
+        return None
+    return os.path.join(GAME_CONFIG_DIR, f"{safe}.cfg")
+
+
+def read_game_config(path: str) -> dict[str, str]:
+    """
+    Reads a simple "key=value" file. Lines starting with # or ; and
+    blank lines are ignored, keys are lower-cased and trimmed. Kept
+    deliberately dumb so the file stays hand-editable.
+    """
+    values: dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line[0] in "#;":
+                    continue
+                key, sep, value = line.partition("=")
+                if not sep:
+                    continue
+                values[key.strip().lower()] = value.strip()
+    except OSError:
+        log(f"Could not read game config: {path}")
+    except Exception:
+        log("ERROR reading game config:\n" + traceback.format_exc())
+    return values
+
+
+def write_default_game_config(path: str, profile_name: str,
+                              game_name: str, bg_image_path: str | None) -> None:
+    """
+    Creates the .cfg on a game's first launch, pre-filled with what
+    ParrotRelay knows about it. The settings block is written with
+    real (default) values, so tweaking a game only means editing a
+    number - no need to remember key names.
+    """
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    content = f"""# ParrotRelay - settings for "{game_name}"
+# Created automatically on {stamp}. Safe to edit; ParrotRelay only
+# reads the "key=value" lines below and ignores everything else.
+#
+# Detected on first launch:
+#   profile    = {profile_name}.xml
+#   game_name  = {game_name}
+#   background = {bg_image_path or "(none - plain black splash)"}
+#
+# ------------------------------------------------------------------
+# Settings
+# ------------------------------------------------------------------
+#
+# splash_extra_delay_ms
+#   How much longer the loading screen stays up AFTER the game window
+#   has appeared, in milliseconds. Useful for games that show their
+#   window early but keep loading (or flicker) for a few more
+#   seconds. Example: 4000 = four extra seconds.
+#   A --relay-delay=<ms> on the command line overrides this value.
+splash_extra_delay_ms={DEFAULT_SPLASH_EXTRA_DELAY_MS}
+"""
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            f.write(content)
+        log(f"Game config created: {path}")
+    except FileExistsError:
+        pass
+    except OSError:
+        log(f"Could not create game config: {path}")
+
+
+def resolve_splash_extra_delay(profile_name: str | None, game_name: str,
+                               bg_image_path: str | None,
+                               cli_delay_ms: int | None) -> int:
+    """
+    Determines how long the splash lingers after the game window
+    showed up, and makes sure the game's .cfg exists.
+
+    Precedence: command line > .cfg > built-in default. The command
+    line wins because it is the more specific, per-launch statement
+    (e.g. one HyperSpin entry that needs extra time).
+    """
+    path = game_config_path(profile_name)
+    if path is not None and not os.path.isfile(path):
+        write_default_game_config(path, profile_name or "?", game_name,
+                                  bg_image_path)
+
+    cfg_delay_ms: int | None = None
+    if path is not None and os.path.isfile(path):
+        cfg = read_game_config(path)
+        if "splash_extra_delay_ms" in cfg:
+            cfg_delay_ms = _parse_delay_ms(
+                cfg["splash_extra_delay_ms"],
+                source=f"{os.path.basename(path)} (splash_extra_delay_ms)",
+            )
+
+    if cli_delay_ms is not None:
+        log(f"Splash extra delay: {cli_delay_ms} ms (from command line)")
+        return cli_delay_ms
+    if cfg_delay_ms is not None:
+        log(f"Splash extra delay: {cfg_delay_ms} ms (from game config)")
+        return cfg_delay_ms
+    return DEFAULT_SPLASH_EXTRA_DELAY_MS
+
 
 
 # ---------------------------------------------------------------------
@@ -621,10 +865,14 @@ def main() -> None:
         )
         return
 
-    args = sys.argv[1:]
+    # Our own arguments are stripped here - TeknoParrot must never
+    # see them, it would reject the unknown switch.
+    args, cli_delay_ms = split_relay_args(sys.argv[1:])
     profile_name = extract_profile_name(args)
     game_name = lookup_game_name(profile_name)
     bg_image_path = find_background_image(profile_name)
+    splash_extra_delay_ms = resolve_splash_extra_delay(
+        profile_name, game_name, bg_image_path, cli_delay_ms)
 
     try:
         proc = subprocess.Popen(
@@ -653,6 +901,10 @@ def main() -> None:
         "game_pid_seen": None,
         "tp_launcher_exited_logged": False,
         "splash_closed": False,
+        # Monotonic timestamp at which the splash may close. Set once
+        # the game window is found; with a delay of 0 that moment is
+        # "right now", so the behaviour is unchanged by default.
+        "splash_close_at": None,
     }
 
     def tick() -> None:
@@ -689,19 +941,35 @@ def main() -> None:
             if state["game_pid_seen"] is None:
                 _, state["game_pid_seen"] = win32process.GetWindowThreadProcessId(hwnd)
 
-            # Only close the splash screen now - the real game window
-            # provably exists, so the loading screen can go.
+            # The real game window provably exists, so the loading
+            # screen may go - after the configured extra delay, for
+            # games that show their window well before they are
+            # actually done loading.
             if not state["splash_closed"]:
-                splash.close()
-                state["splash_closed"] = True
-                log(f"Splash screen closed - target window found: "
-                    f"{describe_hwnd(hwnd)}")
+                if state["splash_close_at"] is None:
+                    state["splash_close_at"] = (
+                        time.monotonic() + splash_extra_delay_ms / 1000.0)
+                    log(f"Target window found: {describe_hwnd(hwnd)} - "
+                        f"closing splash in {splash_extra_delay_ms} ms")
+                    if splash_extra_delay_ms > 0:
+                        splash.set_status("Almost ready...")
 
-            if win32gui.GetForegroundWindow() != hwnd:
-                if hwnd != state["last_focused_hwnd"]:
-                    log(f"New target window detected: {describe_hwnd(hwnd)}")
-                force_focus(hwnd)
-            state["last_focused_hwnd"] = hwnd
+                if time.monotonic() >= state["splash_close_at"]:
+                    splash.close()
+                    state["splash_closed"] = True
+                    log("Splash screen closed")
+                else:
+                    # Hold the splash in front of the game window for
+                    # the rest of the delay, and don't pull focus to
+                    # the game yet - that happens once it's gone.
+                    splash.keep_on_top()
+
+            if state["splash_closed"]:
+                if win32gui.GetForegroundWindow() != hwnd:
+                    if hwnd != state["last_focused_hwnd"]:
+                        log(f"New target window detected: {describe_hwnd(hwnd)}")
+                    force_focus(hwnd)
+                state["last_focused_hwnd"] = hwnd
         elif not state["splash_closed"]:
             # No target window found yet - update splash status
             # depending on launcher state, purely informational.
