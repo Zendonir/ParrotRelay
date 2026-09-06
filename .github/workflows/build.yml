@@ -41,7 +41,7 @@ jobs:
         shell: pwsh
         run: |
           # dist\ParrotRelay already has the wanted layout:
-          #   ParrotRelay.exe  +  ParrotRelay\ (runtime files)
+          #   ParrotRelay.exe  +  RelayData\ (runtime files)
           # Add the docs on top so the zip is self-contained.
           Copy-Item README.md, LICENSE dist\ParrotRelay\
 
@@ -50,7 +50,9 @@ jobs:
         shell: pwsh
         run: |
           $name = "ParrotRelay-$(git rev-parse --short HEAD)"
-          Compress-Archive -Path dist\ParrotRelay\* -DestinationPath "$name.zip"
+          # The folder itself, not its contents: unpacking into the
+          # TeknoParrot folder then yields TeknoParrot\ParrotRelay\...
+          Compress-Archive -Path dist\ParrotRelay -DestinationPath "$name.zip"
           "name=$name" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4

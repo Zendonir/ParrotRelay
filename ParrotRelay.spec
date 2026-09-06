@@ -10,16 +10,17 @@ Two modes, switched with ONEFILE below.
 ONEFILE = False (default, recommended)
     Produces:
         dist\ParrotRelay\ParrotRelay.exe
-        dist\ParrotRelay\ParrotRelay\...     <- runtime files
-    Copy BOTH into the TeknoParrot folder, so it ends up as:
-        D:\ROM\TeknoParrot\ParrotRelay.exe
-        D:\ROM\TeknoParrot\ParrotRelay\      <- runtime files, log,
-                                                GameConfigs
+        dist\ParrotRelay\RelayData\...      <- runtime files
+    Copy the whole "ParrotRelay" folder into the TeknoParrot folder:
+        D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe
+        D:\ROM\TeknoParrot\ParrotRelay\RelayData\
+        D:\ROM\TeknoParrot\ParrotRelay\GameConfigs\   (created at runtime)
+        D:\ROM\TeknoParrot\ParrotRelay\parrot_relay_log.txt
     Nothing is ever unpacked into %TEMP%: the files simply stay
     where they are and are used directly on every launch, so
     startup is faster and there is no leftover-temp-folder problem.
-    The runtime folder is the same "ParrotRelay" folder that holds
-    the log and the per-game configs - one folder, nothing else.
+    All the clutter sits in RelayData; the folder the user opens
+    holds only their own files.
 
     This mode also sidesteps the RPCS3 "vcruntime140.dll was
     incorrectly installed at ...\_MEIxxxxxx\..." error for good,
@@ -40,9 +41,11 @@ ONEFILE = False
 RUNTIME_TMPDIR = None
 
 # One directory level only - PyInstaller rejects nested paths here.
-# Deliberately named like the data folder so everything ParrotRelay
-# needs and writes lives side by side in a single folder.
-CONTENTS_DIRECTORY = "ParrotRelay"
+# The exe ships inside its own "ParrotRelay" folder, so the runtime
+# files end up in ParrotRelay\RelayData and the folder the user
+# actually opens (ParrotRelay) holds nothing but RelayData,
+# GameConfigs and the log.
+CONTENTS_DIRECTORY = "RelayData"
 
 a = Analysis(
     ["parrot_relay.py"],

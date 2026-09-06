@@ -37,7 +37,7 @@ Requirements:
     PNG/GIF, additionally: pip install pillow)
 
 Background images (optional):
-    Create a "LoadingBG" folder NEXT TO ParrotRelay.exe, e.g.
+    Create a "LoadingBG" folder in the TeknoParrot folder, e.g.
     D:\ROM\TeknoParrot\LoadingBG\BBCF.png
     The filename (without extension) must exactly match the
     --profile=<name>.xml from the command line. Supported
@@ -71,12 +71,12 @@ elevating the proxy, and HyperHQ (not elevated) can't spawn an
 elevated proxy via spawn() anyway (Windows refuses with EACCES).
 That's why --uac-admin is deliberately NOT used.
 
-Copy the build output from dist\ParrotRelay\ (the exe AND the
-ParrotRelay folder next to it; just the exe for a onefile build) to
-D:\ROM\TeknoParrot\, i.e. right next to TeknoParrotUi.exe.
+Copy the whole "ParrotRelay" folder from dist\ into
+D:\ROM\TeknoParrot\, so that TeknoParrotUi.exe and the ParrotRelay
+folder sit side by side.
 
 HyperSpin 2 configuration:
-    Platform Path: D:\ROM\TeknoParrot\ParrotRelay.exe
+    Platform Path: D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe
     Command Line:  --startMinimized --profile=%rom.filename%.xml
     (unchanged - the proxy passes it through 1:1; only ParrotRelay's
     own --relay-delay= switch, see below, is filtered out)
@@ -91,7 +91,7 @@ Loading screen delay (optional):
         (also accepted: --relaydelay= / --splash-delay=). The switch
         is consumed by ParrotRelay and never forwarded to TP.
       - per game, permanently, in the settings window or in
-            ParrotRelay\RelayData\GameConfigs\<profile>.cfg
+            ParrotRelay\GameConfigs\<profile>.cfg
             splash_extra_delay_ms=4000
 
     Command line beats the game .cfg, which beats the global
@@ -112,23 +112,28 @@ Settings window:
       - "Apply to all games" for cabinet-wide settings
       - shortcuts to the log and the data folder
 
-Data folder and per-game configs:
-    On first start a "ParrotRelay\RelayData" folder is created:
+Folder layout:
+    ParrotRelay lives in its own folder inside the TeknoParrot folder:
 
-      ParrotRelay\RelayData\parrot_relay_log.txt   - the log
-          (appended, not overwritten, so multiple runs can be compared)
-      ParrotRelay\RelayData\ParrotRelay.cfg        - global defaults
-      ParrotRelay\RelayData\GameConfigs\<profile>.cfg - per game,
+      TeknoParrot\ParrotRelay\ParrotRelay.exe
+      TeknoParrot\ParrotRelay\RelayData\        - the runtime files
+          that belong to the exe (DLLs and the like). Never needs to
+          be opened.
+      TeknoParrot\ParrotRelay\GameConfigs\      - one .cfg per game,
           written the first time a game is launched, containing what
           was detected for it (profile, game name, background image)
           plus every available setting with its explanation. Lines
           starting with # follow the global defaults; removing the #
           pins that value for this game.
+      TeknoParrot\ParrotRelay\ParrotRelay.cfg   - global defaults
+      TeknoParrot\ParrotRelay\parrot_relay_log.txt - the log
+          (appended, not overwritten, so runs can be compared)
 
-    RelayData is deliberately one level down: in a onedir build the
-    folder next to the exe is full of runtime DLLs, and mixing the
-    user's own files into that is just confusing. Data written by
-    older versions is moved into RelayData automatically.
+    An exe sitting directly next to TeknoParrotUi.exe (the layout of
+    older versions) still works: TeknoParrotUi.exe is looked for next
+    to the exe first, then one level up, and a "ParrotRelay" folder is
+    used for the data in that case. Files written by older versions
+    are moved to their new place automatically.
 
 """
 
@@ -167,28 +172,50 @@ VERSION = "1.1.1"
 # ---------------------------------------------------------------------
 
 if getattr(sys, "frozen", False):
-    # As a PyInstaller EXE: use its own location instead of __file__
-    TP_DIR = os.path.dirname(sys.executable)
+    # As a PyInstaller EXE: its own location, not __file__.
+    EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    TP_DIR = os.path.dirname(os.path.abspath(__file__))
+    EXE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# The exe normally lives in a "ParrotRelay" folder inside the
+# TeknoParrot folder, with its runtime files one level below that in
+# "RelayData". Older installs put the exe right next to
+# TeknoParrotUi.exe, so both placements are accepted: look for
+# TeknoParrotUi.exe next to the exe first, then one level up.
+if os.path.isfile(os.path.join(EXE_DIR, "TeknoParrotUi.exe")):
+    TP_DIR = EXE_DIR
+elif os.path.isfile(os.path.join(os.path.dirname(EXE_DIR),
+                                 "TeknoParrotUi.exe")):
+    TP_DIR = os.path.dirname(EXE_DIR)
+else:
+    # Nothing found - assume the current layout so the settings window
+    # can still start and say what is missing.
+    TP_DIR = os.path.dirname(EXE_DIR) if os.path.basename(EXE_DIR).lower() \
+        == "parrotrelay" else EXE_DIR
 
 TP_EXE = os.path.join(TP_DIR, "TeknoParrotUi.exe")
 
-# In a onedir build the folder next to the exe holds the runtime files
-# (DLLs and the like) - a wall of files nobody wants to scroll
-# through. So everything ParrotRelay writes goes one level deeper into
-# "RelayData": the log and one .cfg per game, plus the global
-# defaults. That is the only folder a user ever needs to open.
-RELAY_ROOT = os.path.join(TP_DIR, "ParrotRelay")
-DATA_DIR = os.path.join(RELAY_ROOT, "RelayData")
+# Where ParrotRelay's own files live. With the exe in its own folder
+# that IS the exe folder, so the layout ends up as
+#
+#   TeknoParrot\ParrotRelay\ParrotRelay.exe
+#   TeknoParrot\ParrotRelay\RelayData\        <- runtime files
+#   TeknoParrot\ParrotRelay\GameConfigs\      <- one .cfg per game
+#   TeknoParrot\ParrotRelay\parrot_relay_log.txt
+#
+# With the exe sitting directly next to TeknoParrotUi.exe (the older
+# layout) a "ParrotRelay" folder is used instead, so nothing is
+# scattered into TeknoParrot's own folder.
+RELAY_ROOT = EXE_DIR if EXE_DIR != TP_DIR \
+    else os.path.join(TP_DIR, "ParrotRelay")
+DATA_DIR = RELAY_ROOT
 GAME_CONFIG_DIR = os.path.join(DATA_DIR, "GameConfigs")
 
 try:
     os.makedirs(GAME_CONFIG_DIR, exist_ok=True)
     _DATA_DIR_OK = True
 except OSError:
-    # e.g. read-only folder - fall back to the old behaviour rather
-    # than failing the launch.
+    # e.g. read-only folder - fall back rather than failing the launch.
     _DATA_DIR_OK = False
     RELAY_ROOT = TP_DIR
     DATA_DIR = TP_DIR
@@ -202,13 +229,14 @@ def resource_path(name: str) -> str | None:
     """
     Finds a file that ships WITH ParrotRelay (as opposed to one the
     user provides). PyInstaller puts bundled files in sys._MEIPASS -
-    the runtime folder in a onedir build, the unpack folder in a
+    the RelayData folder in a onedir build, the unpack folder in a
     onefile build - while running from source they sit next to the
     script. Returns None if the file isn't there.
     """
     candidates = [
         getattr(sys, "_MEIPASS", None),
         os.path.dirname(os.path.abspath(__file__)),
+        EXE_DIR,
         RELAY_ROOT,
         TP_DIR,
     ]
@@ -223,33 +251,50 @@ def resource_path(name: str) -> str | None:
 
 def _migrate_old_locations() -> None:
     """
-    Moves data written by earlier versions into RelayData: the log
-    file that used to sit next to the exe, and the log/GameConfigs
-    that used to sit among the runtime files. Best effort - a failed
-    move is never worth aborting a game launch for.
+    Moves data written by earlier versions to where it lives now: the
+    log used to sit next to TeknoParrotUi.exe, later among the runtime
+    files, then in a RelayData subfolder. Best effort - a failed move
+    is never worth aborting a game launch for.
     """
     if not _DATA_DIR_OK:
         return
 
-    for old_log in (os.path.join(TP_DIR, "parrot_relay_log.txt"),
-                    os.path.join(RELAY_ROOT, "parrot_relay_log.txt")):
+    old_roots = [
+        TP_DIR,
+        os.path.join(TP_DIR, "ParrotRelay"),
+        os.path.join(TP_DIR, "ParrotRelay", "RelayData"),
+        os.path.join(RELAY_ROOT, "RelayData"),
+    ]
+
+    for old_root in old_roots:
+        if os.path.abspath(old_root) == os.path.abspath(DATA_DIR):
+            continue
+
+        old_log = os.path.join(old_root, "parrot_relay_log.txt")
         if os.path.isfile(old_log) and not os.path.exists(LOG_PATH):
             try:
                 os.replace(old_log, LOG_PATH)
             except OSError:
                 pass
 
-    old_configs = os.path.join(RELAY_ROOT, "GameConfigs")
-    if os.path.isdir(old_configs) and os.path.abspath(old_configs) != \
-            os.path.abspath(GAME_CONFIG_DIR):
-        try:
-            for entry in os.listdir(old_configs):
-                target = os.path.join(GAME_CONFIG_DIR, entry)
-                if not os.path.exists(target):
-                    os.replace(os.path.join(old_configs, entry), target)
-            os.rmdir(old_configs)
-        except OSError:
-            pass
+        old_global = os.path.join(old_root, "ParrotRelay.cfg")
+        if os.path.isfile(old_global) and not os.path.exists(GLOBAL_CONFIG_PATH):
+            try:
+                os.replace(old_global, GLOBAL_CONFIG_PATH)
+            except OSError:
+                pass
+
+        old_configs = os.path.join(old_root, "GameConfigs")
+        if os.path.isdir(old_configs) and os.path.abspath(old_configs) != \
+                os.path.abspath(GAME_CONFIG_DIR):
+            try:
+                for entry in os.listdir(old_configs):
+                    target = os.path.join(GAME_CONFIG_DIR, entry)
+                    if not os.path.exists(target):
+                        os.replace(os.path.join(old_configs, entry), target)
+                os.rmdir(old_configs)
+            except OSError:
+                pass
 
 
 _migrate_old_locations()
@@ -283,55 +328,118 @@ DEFAULT_SPLASH_EXTRA_DELAY_MS = 0
 MAX_SPLASH_EXTRA_DELAY_MS = 60_000
 
 
+# DLLs that an emulator must never pick up from our folder. RPCS3 in
+# particular refuses to run when it finds a VC runtime outside the
+# proper Microsoft installation, and aborts with a fatal error.
+RUNTIME_DLL_NAMES = (
+    "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll",
+    "concrt140.dll",
+)
+
+
+def _canonical_path(path: str) -> str:
+    """
+    Normalises a path for comparison: expands 8.3 short names
+    (D:\\ROM\\TEKNOP~1) to the long form, then normcase/normpath.
+    Without the short-name step two spellings of the same folder
+    would compare as different.
+    """
+    path = path.strip().strip('"')
+    if not path:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetLongPathNameW(path, buffer, 32768):
+            path = buffer.value
+    except Exception:
+        pass
+    try:
+        return os.path.normcase(os.path.normpath(path))
+    except Exception:
+        return path
+
+
+def _own_directories() -> list[str]:
+    """
+    Every folder that belongs to ParrotRelay itself. A child process
+    must not find DLLs in any of them.
+    """
+    directories = [
+        getattr(sys, "_MEIPASS", None),
+        os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False) else None,
+        RELAY_ROOT,
+        DATA_DIR,
+    ]
+    return [_canonical_path(d) for d in directories if d]
+
+
+def _report_runtime_dlls_on_path(path_value: str) -> None:
+    """
+    Logs which PATH entries actually hold a VC runtime DLL. When an
+    emulator still loads the wrong one, this says exactly which
+    directory it came from instead of leaving us guessing.
+    """
+    seen = 0
+    for entry in path_value.split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry:
+            continue
+        try:
+            names = {name.lower() for name in os.listdir(entry)}
+        except OSError:
+            continue
+        hit = names.intersection(RUNTIME_DLL_NAMES)
+        if hit:
+            log(f"NOTE: child PATH offers {sorted(hit)[0]} from {entry}")
+            seen += 1
+        if seen >= 5:
+            log("NOTE: (more entries not checked)")
+            return
+
+
 def build_child_environment() -> dict[str, str]:
     """
     Builds the environment for TeknoParrotUi.exe (and thus for every
     game process started underneath it).
 
-    Background: as a PyInstaller onefile EXE, ParrotRelay unpacks
-    itself into a temp folder (C:\\...\\Temp\\_MEIxxxxxx) that also
-    contains PyInstaller's own runtime DLLs (VCRUNTIME140.dll,
-    python3xx.dll, ...). The bootloader puts that folder at the FRONT
-    of PATH. Since child processes inherit our environment, an
-    emulator like RPCS3 would then load OUR VCRUNTIME140.dll instead
-    of its own - which it rejects with a fatal error ("The module
-    vcruntime140.dll was incorrectly installed at ...\\_MEIxxxx\\...").
-    It also keeps the DLL locked, so the temp folder can't be cleaned
-    up on exit ("Failed to remove temporary directory").
+    Background: ParrotRelay ships its own copies of the Python and VC
+    runtime DLLs (VCRUNTIME140.dll, python3xx.dll, ...) - in a onefile
+    build in a temp folder, in a onedir build in the runtime folder.
+    Child processes inherit our environment, so if one of those
+    folders is on PATH, an emulator like RPCS3 loads OUR
+    VCRUNTIME140.dll instead of the properly installed one and
+    aborts ("The module vcruntime140.dll was incorrectly installed
+    at ...").
 
-    So we hand the child a cleaned copy: the _MEI folder is removed
-    from PATH and PyInstaller's internal variables are dropped.
-    Outside of a frozen build this is a plain copy of os.environ.
+    So the child gets a cleaned copy: every PATH entry pointing into a
+    folder of ours is dropped - no matter who put it there - and
+    PyInstaller's internal variables go too.
     """
     env = os.environ.copy()
 
-    meipass = getattr(sys, "_MEIPASS", None)
-    if not meipass:
+    if not getattr(sys, "frozen", False):
         return env
 
-    def is_bundle_dir(entry: str) -> bool:
-        entry = entry.strip().strip('"')
-        if not entry:
-            return False
-        try:
-            return os.path.normcase(os.path.normpath(entry)) == \
-                os.path.normcase(os.path.normpath(meipass))
-        except Exception:
-            return False
-
+    own = set(_own_directories())
     path = env.get("PATH", "")
-    cleaned = [e for e in path.split(os.pathsep) if not is_bundle_dir(e)]
+    entries = path.split(os.pathsep)
+    cleaned = [e for e in entries if _canonical_path(e) not in own]
+
+    if len(cleaned) != len(entries):
+        removed = [e for e in entries if _canonical_path(e) in own]
+        for entry in removed:
+            log(f"Removed own folder from child PATH: {entry}")
     env["PATH"] = os.pathsep.join(cleaned)
 
     # PyInstaller's own bookkeeping - a child must not inherit it,
     # otherwise a nested bootloader would reuse our unpack folder.
     for var in ("_MEIPASS2", "_PYI_APPLICATION_HOME_DIR",
-                "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL"):
+                "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                "PYTHONPATH", "PYTHONHOME"):
         env.pop(var, None)
 
-    if len(cleaned) != len(path.split(os.pathsep)):
-        log(f"PyInstaller bundle dir removed from child PATH: {meipass}")
-
+    _report_runtime_dlls_on_path(env["PATH"])
     return env
 
 
@@ -1117,7 +1225,7 @@ class SettingsWindow:
         ttk.Separator(outer, orient="horizontal").pack(
             side="bottom", fill="x", pady=(6, 0))
 
-        ttk.Button(footer, text="Open RelayData folder",
+        ttk.Button(footer, text="Open ParrotRelay folder",
                    command=lambda: open_in_explorer(DATA_DIR)).pack(side="left")
         ttk.Button(footer, text="Open log",
                    command=self._open_log).pack(side="left", padx=6)

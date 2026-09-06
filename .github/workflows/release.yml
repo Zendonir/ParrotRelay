@@ -106,7 +106,9 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\ParrotRelay\* `
+          # The folder itself, not its contents: unpacking into the
+          # TeknoParrot folder then yields TeknoParrot\ParrotRelay\...
+          Compress-Archive -Path dist\ParrotRelay `
             -DestinationPath "${{ steps.version.outputs.package }}.zip"
 
       - name: Commit and tag the version bump

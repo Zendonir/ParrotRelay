@@ -21,9 +21,9 @@ ParrotRelay sits between HyperHQ and TeknoParrotUi.exe and fixes this without to
 ## Installation
 
 1. Open [Releases](../../releases) and download the zip.
-2. Unpack it right next to `TeknoParrotUi.exe`, so you end up with `D:\ROM\TeknoParrot\ParrotRelay.exe` and the `ParrotRelay` folder beside it.
+2. Unpack it into the TeknoParrot folder, so that `TeknoParrotUi.exe` and the `ParrotRelay` folder sit side by side.
 3. In HyperSpin 2, edit the TeknoParrot platform:
-   - **Platform Path:** `D:\ROM\TeknoParrot\ParrotRelay.exe`
+   - **Platform Path:** `D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe`
    - **Command Line:** leave unchanged, e.g. `--startMinimized --profile=%rom.filename%.xml`
 
 No admin rights setup required. Double-click `ParrotRelay.exe` once to open the settings window and check that it finds your games.
@@ -49,7 +49,7 @@ Start `ParrotRelay.exe` **without arguments** — i.e. double-click it instead o
 - **Preview loading screen** shows the splash exactly as it will appear at launch — the quickest way to check a background image
 - **Apply to all games** for cabinet-wide settings
 - **Use global defaults** drops everything stored for one game; **Pin all values** does the opposite and writes every value as an explicit line, so the game keeps them no matter what the defaults do later
-- shortcuts to the log and the `RelayData` folder
+- shortcuts to the log and the `ParrotRelay` folder
 - the version you are running is shown in the title bar and the status line
 
 Everything it writes is a plain text file you can also edit by hand.
@@ -75,17 +75,21 @@ Besides the settings window, the delay can be set per launch straight from the c
 
 Precedence: command line &rarr; game config &rarr; global defaults &rarr; built-in default (`0`). Values are capped at 60000 ms.
 
-## Data folder
+## Folder layout
 
-On first start ParrotRelay creates a `RelayData` folder for everything it writes:
+ParrotRelay lives in its own folder inside the TeknoParrot folder:
 
 ```
-D:\ROM\TeknoParrot\ParrotRelay\RelayData\parrot_relay_log.txt
-D:\ROM\TeknoParrot\ParrotRelay\RelayData\ParrotRelay.cfg          <- global defaults
-D:\ROM\TeknoParrot\ParrotRelay\RelayData\GameConfigs\BBCF.cfg     <- per game
+D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe
+D:\ROM\TeknoParrot\ParrotRelay\RelayData\             <- runtime files of the exe
+D:\ROM\TeknoParrot\ParrotRelay\GameConfigs\BBCF.cfg   <- one per game
+D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.cfg        <- global defaults
+D:\ROM\TeknoParrot\ParrotRelay\parrot_relay_log.txt
 ```
 
-It sits one level below the runtime files on purpose — that folder is full of DLLs and mixing your own files into it is just confusing. Data written by older versions is moved here automatically.
+`RelayData` holds everything that belongs to the exe — DLLs and the like — and never needs to be opened. What is left is your own: the configs and the log.
+
+An exe sitting directly next to `TeknoParrotUi.exe` (the layout of older versions) still works: `TeknoParrotUi.exe` is looked for next to the exe first, then one level up. Files written by older versions are moved to their new place automatically on the next start.
 
 A game's `.cfg` is written the first time it is launched and contains everything detected for it plus every available setting with its explanation. Lines starting with `#` follow the global defaults; removing the `#` pins that value for this game. A pinned line always wins over the global defaults — that is the whole point of the file — and keeps winning when the defaults change later. Existing files are never overwritten.
 
@@ -96,15 +100,15 @@ pip install -r requirements.txt
 pyinstaller ParrotRelay.spec
 ```
 
-This produces `dist\ParrotRelay\` containing `ParrotRelay.exe` plus a `ParrotRelay` folder with the runtime files. Copy **both** into the TeknoParrot folder:
+This produces `dist\ParrotRelay\` containing `ParrotRelay.exe` plus its `RelayData` folder. Copy the whole `ParrotRelay` folder into the TeknoParrot folder:
 
 ```
-D:\ROM\TeknoParrot\ParrotRelay.exe
-D:\ROM\TeknoParrot\ParrotRelay\           <- runtime files
-D:\ROM\TeknoParrot\ParrotRelay\RelayData\ <- log and configs
+D:\ROM\TeknoParrot\TeknoParrotUi.exe
+D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe
+D:\ROM\TeknoParrot\ParrotRelay\RelayData\   <- runtime files
 ```
 
-The runtime files stay where they are and are used directly on every launch — nothing is ever unpacked into `%TEMP%`, startup is faster, and no temp folder can be left behind. Everything ParrotRelay writes goes into `RelayData` below it, so there is exactly one extra folder next to `TeknoParrotUi.exe`.
+The runtime files stay where they are and are used directly on every launch — nothing is ever unpacked into `%TEMP%`, startup is faster, and no temp folder can be left behind.
 
 ### Automated builds
 
@@ -128,7 +132,7 @@ Set `ONEFILE = True` at the top of `ParrotRelay.spec` for a single `dist\ParrotR
 
 ## Logging
 
-`ParrotRelay\RelayData\parrot_relay_log.txt` is created on first start and appended to on every run — useful for debugging which window was detected/suppressed/focused and when.
+`ParrotRelay\parrot_relay_log.txt` is created on first start and appended to on every run — useful for debugging which window was detected/suppressed/focused and when.
 
 ## License
 
