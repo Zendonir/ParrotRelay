@@ -1114,6 +1114,9 @@ class SettingsWindow:
         self.inherit_button = ttk.Button(
             actions, text="Use global defaults", command=self._inherit_all)
         self.inherit_button.pack(side="left")
+        self.pin_button = ttk.Button(
+            actions, text="Pin all values", command=self._pin_all)
+        self.pin_button.pack(side="left", padx=6)
         ttk.Button(actions, text="Preview loading screen",
                    command=self._preview).pack(side="right")
 
@@ -1297,6 +1300,7 @@ class SettingsWindow:
                 f"Applies to every game that does not override it  -  "
                 f"{GLOBAL_CONFIG_PATH}")
             self.inherit_button.state(["disabled"])
+            self.pin_button.state(["disabled"])
         else:
             name = dict(self.games).get(profile, profile)
             path = game_config_path(profile) or "?"
@@ -1308,6 +1312,7 @@ class SettingsWindow:
                 f"{len(pinned)} of {len(SETTINGS)} settings set for this game"
                 f"   -   background: {bg or 'none found'}")
             self.inherit_button.state(["!disabled"])
+            self.pin_button.state(["!disabled"])
 
         self.dirty = False
 
@@ -1405,6 +1410,33 @@ class SettingsWindow:
         self._refresh_game_list()
         self._load_current()
         self.status_var.set(f"\"{name}\" follows the global defaults again")
+
+    def _pin_all(self) -> None:
+        """
+        Writes every value as an explicit line for this game, even the
+        ones that currently match the global defaults. For when a game
+        should be nailed down as it is and stay that way no matter
+        what the defaults do later.
+        """
+        values = self._collect_values()
+        if values is None:
+            return
+        profile = self.current_profile
+        if profile is None:
+            return
+
+        name = dict(self.games).get(profile, profile)
+        if not write_config_file(
+                game_config_path(profile), values,
+                game_config_header(profile, name,
+                                   find_background_image(profile)),
+                active_keys={setting.key for setting in SETTINGS}):
+            return
+
+        self.dirty = False
+        self._refresh_game_list()
+        self._load_current()
+        self.status_var.set(f"All values pinned for \"{name}\"")
 
     def _apply_to_all(self) -> None:
         """

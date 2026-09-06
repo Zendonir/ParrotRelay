@@ -48,7 +48,7 @@ Start `ParrotRelay.exe` **without arguments** — i.e. double-click it instead o
 - **Global defaults** apply to every game; per-game entries override them. A game only stores what actually differs, so changing a default still reaches every game that never overrode it
 - **Preview loading screen** shows the splash exactly as it will appear at launch — the quickest way to check a background image
 - **Apply to all games** for cabinet-wide settings
-- **Use global defaults** drops everything stored for one game
+- **Use global defaults** drops everything stored for one game; **Pin all values** does the opposite and writes every value as an explicit line, so the game keeps them no matter what the defaults do later
 - shortcuts to the log and the `RelayData` folder
 
 Everything it writes is a plain text file you can also edit by hand.
@@ -86,7 +86,7 @@ D:\ROM\TeknoParrot\ParrotRelay\RelayData\GameConfigs\BBCF.cfg     <- per game
 
 It sits one level below the runtime files on purpose — that folder is full of DLLs and mixing your own files into it is just confusing. Data written by older versions is moved here automatically.
 
-A game's `.cfg` is written the first time it is launched and contains everything detected for it plus every available setting with its explanation. Lines starting with `#` follow the global defaults; removing the `#` pins that value for this game. Existing files are never overwritten.
+A game's `.cfg` is written the first time it is launched and contains everything detected for it plus every available setting with its explanation. Lines starting with `#` follow the global defaults; removing the `#` pins that value for this game. A pinned line always wins over the global defaults — that is the whole point of the file — and keeps winning when the defaults change later. Existing files are never overwritten.
 
 ## Building from source
 
