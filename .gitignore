@@ -1,0 +1,6 @@
+build/
+dist/
+__pycache__/
+*.pyc
+ParrotRelay/
+parrot_relay_log.txt
