@@ -130,6 +130,58 @@ POLL_INTERVAL = 0.05
 MIN_WINDOW_AREA = 200 * 150
 
 
+def build_child_environment() -> dict[str, str]:
+    """
+    Builds the environment for TeknoParrotUi.exe (and thus for every
+    game process started underneath it).
+
+    Background: as a PyInstaller onefile EXE, ParrotRelay unpacks
+    itself into a temp folder (C:\\...\\Temp\\_MEIxxxxxx) that also
+    contains PyInstaller's own runtime DLLs (VCRUNTIME140.dll,
+    python3xx.dll, ...). The bootloader puts that folder at the FRONT
+    of PATH. Since child processes inherit our environment, an
+    emulator like RPCS3 would then load OUR VCRUNTIME140.dll instead
+    of its own - which it rejects with a fatal error ("The module
+    vcruntime140.dll was incorrectly installed at ...\\_MEIxxxx\\...").
+    It also keeps the DLL locked, so the temp folder can't be cleaned
+    up on exit ("Failed to remove temporary directory").
+
+    So we hand the child a cleaned copy: the _MEI folder is removed
+    from PATH and PyInstaller's internal variables are dropped.
+    Outside of a frozen build this is a plain copy of os.environ.
+    """
+    env = os.environ.copy()
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not meipass:
+        return env
+
+    def is_bundle_dir(entry: str) -> bool:
+        entry = entry.strip().strip('"')
+        if not entry:
+            return False
+        try:
+            return os.path.normcase(os.path.normpath(entry)) == \
+                os.path.normcase(os.path.normpath(meipass))
+        except Exception:
+            return False
+
+    path = env.get("PATH", "")
+    cleaned = [e for e in path.split(os.pathsep) if not is_bundle_dir(e)]
+    env["PATH"] = os.pathsep.join(cleaned)
+
+    # PyInstaller's own bookkeeping - a child must not inherit it,
+    # otherwise a nested bootloader would reuse our unpack folder.
+    for var in ("_MEIPASS2", "_PYI_APPLICATION_HOME_DIR",
+                "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL"):
+        env.pop(var, None)
+
+    if len(cleaned) != len(path.split(os.pathsep)):
+        log(f"PyInstaller bundle dir removed from child PATH: {meipass}")
+
+    return env
+
+
 def extract_profile_name(args: list[str]) -> str | None:
     """
     Extracts the raw profile filename from --profile=XYZ.xml (e.g.
@@ -575,7 +627,11 @@ def main() -> None:
     bg_image_path = find_background_image(profile_name)
 
     try:
-        proc = subprocess.Popen([TP_EXE] + args, cwd=TP_DIR)
+        proc = subprocess.Popen(
+            [TP_EXE] + args,
+            cwd=TP_DIR,
+            env=build_child_environment(),
+        )
     except Exception:
         log("ERROR starting TeknoParrotUi.exe:\n" + traceback.format_exc())
         return
