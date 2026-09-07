@@ -36,16 +36,19 @@ Purpose:
     3. Lets ESC cancel a launch while the loading screen is up:
        TeknoParrot and every process it started are ended, so a
        cancelled launch doesn't leave a half-started game behind.
-    4. Actively hides TeknoParrot's own windows (main window, "Game is
+    4. Rebuilds the loading screen when the game switches the display
+       mode, which many do while starting - otherwise the screen,
+       laid out for the old resolution, ends up half off the edge.
+    5. Actively hides TeknoParrot's own windows (main window, "Game is
        running") AS SOON AS they become visible - before they can
        ever take focus/foreground. This is the core fix: with
        exclusive fullscreen (e.g. BlazBlue), a single focus change
        away from the game is enough for it to drop out of fullscreen
        - refocusing afterwards is already too late.
-    5. Additionally, as a safety net, continuously focuses the real
+    6. Additionally, as a safety net, continuously focuses the real
        game window in case some other window (HyperOverlay etc.)
        briefly comes to the foreground.
-    6. Stays alive until the ACTUAL game has closed - not just until
+    7. Stays alive until the ACTUAL game has closed - not just until
        TeknoParrotUi.exe (a pure launcher stub that exits by itself
        shortly after starting the game) disappears. Otherwise HyperHQ
        (which watches this proxy as "the emulator") would wrongly
@@ -646,6 +649,7 @@ class SplashScreen:
     def __init__(self, game_name: str, bg_image_path: str | None,
                  visible: bool = True):
         self.visible = visible
+        self.game_name = game_name
         self.root = tk.Tk()
         self.root.overrideredirect(True)  # no title bar/border
         self.root.attributes("-topmost", True)
@@ -657,85 +661,31 @@ class SplashScreen:
         if not visible:
             self.root.withdraw()
 
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        self.root.geometry(f"{screen_w}x{screen_h}+0+0")
-
-        self.canvas = tk.Canvas(
-            self.root, width=screen_w, height=screen_h,
-            bg="black", highlightthickness=0,
-        )
+        self.canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
         # self._bg_photo must be kept as an attribute, otherwise
         # Python's garbage collector removes the PhotoImage object
         # again as soon as __init__ returns, and the image disappears.
         self._bg_photo = None
-        image_h = 0
+        self._scaled_photo = None
+        self._bg_image_path = bg_image_path
         if bg_image_path:
             self._bg_photo = load_image_native_size(bg_image_path)
             if self._bg_photo:
-                image_h = self._bg_photo.height()
-                log(f"Image loaded (native size "
-                    f"{self._bg_photo.width()}x{image_h}): {bg_image_path}")
+                log(f"Image loaded (native size {self._bg_photo.width()}x"
+                    f"{self._bg_photo.height()}): {bg_image_path}")
             else:
                 log(f"Could not load image: {bg_image_path}")
 
-        # Vertical stack of [image] -> game name -> status, centered
-        # as a whole on the screen. anchor="n" anchors each element
-        # at its top edge, so the y-position just needs to keep
-        # increasing downward.
-        gap_image_to_name = 30
-        gap_name_to_status = 15
-        gap_status_to_bar = 25
-        name_line_h = 55   # approx line height at font size 40
-        status_line_h = 30  # approx line height at font size 20
-        bar_w = max(320, min(int(screen_w * 0.35), 900))
-        bar_h = 12
-
-        total_h = (
-            (image_h + gap_image_to_name if image_h else 0)
-            + name_line_h + gap_name_to_status + status_line_h
-            + gap_status_to_bar + bar_h
-        )
-        y = screen_h // 2 - total_h // 2
-
-        if self._bg_photo:
-            self.canvas.create_image(
-                screen_w // 2, y, image=self._bg_photo, anchor="n",
-            )
-            y += image_h + gap_image_to_name
-
-        self.canvas.create_text(
-            screen_w // 2, y,
-            text=game_name, fill="white",
-            font=("Segoe UI", 40, "bold"), anchor="n",
-        )
-        y += name_line_h + gap_name_to_status
-
-        self.status_text_id = self.canvas.create_text(
-            screen_w // 2, y,
-            text="Loading...", fill="#cccccc",
-            font=("Segoe UI", 20), anchor="n",
-        )
-        y += status_line_h + gap_status_to_bar
-
-        # Progress bar: an outlined track with a filled part. Drawn on
-        # the same canvas rather than as a ttk widget, so it inherits
-        # the background image instead of sitting on a grey rectangle.
-        self._bar_left = screen_w // 2 - bar_w // 2
-        self._bar_right = self._bar_left + bar_w
-        self._bar_top = y
-        self._bar_bottom = y + bar_h
-        self.canvas.create_rectangle(
-            self._bar_left, self._bar_top, self._bar_right, self._bar_bottom,
-            outline="#666666", width=1,
-        )
-        self.bar_fill_id = self.canvas.create_rectangle(
-            self._bar_left, self._bar_top, self._bar_left, self._bar_bottom,
-            outline="", fill="#e0e0e0",
-        )
+        # State that has to survive a re-layout after a resolution
+        # change, since that rebuilds every item on the canvas.
+        self._status_text = "Loading..."
+        self._progress: float | None = 0.0
         self._indeterminate_pos = 0.0
+        self._screen_size = (0, 0)
+
+        self._layout()
 
         self.root.update_idletasks()
         # The splash is topmost anyway; grabbing the keyboard as well is
@@ -747,7 +697,145 @@ class SplashScreen:
                 pass
         self.root.update()
 
+    def _layout(self) -> None:
+        """
+        (Re-)builds the loading screen for the CURRENT screen size.
+
+        Games routinely switch the display mode while starting, and a
+        window laid out for the old resolution then sits half off the
+        screen with its text cut off.
+
+        Everything is measured rather than estimated: each element is
+        created, its real size read back, and only then is the stack
+        centred. That way a long game name that wraps, a scaled font
+        or a missing image all come out centred instead of drifting.
+        """
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self._screen_size = (screen_w, screen_h)
+
+        self.root.geometry(f"{screen_w}x{screen_h}+0+0")
+        self.canvas.configure(width=screen_w, height=screen_h)
+        self.canvas.delete("all")
+
+        # Sizes follow the screen: 40 pt is right on 1080p and far too
+        # big on a 640x480 mode, where it would run off both edges.
+        name_size = max(16, min(40, screen_w // 40))
+        status_size = max(10, min(20, screen_w // 80))
+        text_width = max(200, screen_w - 80)
+        bar_w = max(200, min(int(screen_w * 0.35), 900, screen_w - 60))
+        bar_h = max(6, min(12, screen_h // 80))
+        gap = max(10, screen_h // 45)
+
+        cx = screen_w // 2
+        y = 0
+
+        def place(create) -> None:
+            """Creates an element at the running y and advances past it."""
+            nonlocal y
+            item = create(y)
+            box = self.canvas.bbox(item)
+            if box:
+                y = box[3] + gap
+
+        image = self._fitting_image(screen_w, screen_h)
+        if image is not None:
+            place(lambda top: self.canvas.create_image(
+                cx, top, image=image, anchor="n"))
+
+        place(lambda top: self.canvas.create_text(
+            cx, top, text=self.game_name, fill="white", anchor="n",
+            font=("Segoe UI", name_size, "bold"), width=text_width,
+            justify="center"))
+
+        self.status_text_id = self.canvas.create_text(
+            cx, y, text=self._status_text, fill="#cccccc", anchor="n",
+            font=("Segoe UI", status_size), width=text_width,
+            justify="center")
+        box = self.canvas.bbox(self.status_text_id)
+        y = (box[3] if box else y) + gap
+
+        # Progress bar: an outlined track with a filled part. Drawn on
+        # the same canvas rather than as a ttk widget, so it inherits
+        # the background instead of sitting on a grey rectangle.
+        track_id = self.canvas.create_rectangle(
+            cx - bar_w // 2, y, cx + bar_w // 2, y + bar_h,
+            outline="#666666", width=1)
+        self.bar_fill_id = self.canvas.create_rectangle(
+            cx - bar_w // 2, y, cx - bar_w // 2, y + bar_h,
+            outline="", fill="#e0e0e0")
+        y += bar_h
+
+        # Centre the finished stack vertically, then read the bar's
+        # real position back - set_progress works off those numbers.
+        offset = max(0, (screen_h - y) // 2)
+        if offset:
+            self.canvas.move("all", 0, offset)
+        track = self.canvas.bbox(track_id)
+        self._bar_left, self._bar_top, self._bar_right, self._bar_bottom = (
+            track if track else (0, 0, bar_w, bar_h))
+
+        self.set_progress(self._progress)
+
+    def _fitting_image(self, screen_w: int, screen_h: int):
+        """
+        The background image at a size that leaves room for the text
+        below it. Pillow can scale it down; without Pillow an image
+        that is too large is left out rather than pushing everything
+        else off the screen.
+        """
+        if not self._bg_photo:
+            return None
+
+        # Roughly a third of the height goes to name, status and bar.
+        max_h = max(0, int(screen_h * 0.55))
+        max_w = max(0, screen_w - 80)
+        if self._bg_photo.height() <= max_h and self._bg_photo.width() <= max_w:
+            self._scaled_photo = None
+            return self._bg_photo
+
+        if not _PILLOW_AVAILABLE or not self._bg_image_path:
+            log("Background image is too large for this resolution and "
+                "Pillow is not available to scale it - showing the text only")
+            return None
+
+        try:
+            image = Image.open(self._bg_image_path)
+            image.thumbnail((max_w, max_h))
+            # Kept as an attribute for the same reason as _bg_photo:
+            # otherwise the garbage collector takes the image away.
+            self._scaled_photo = ImageTk.PhotoImage(image)
+            return self._scaled_photo
+        except Exception:
+            log("ERROR scaling the background image:\n" + traceback.format_exc())
+            return None
+
+    def refresh_geometry(self) -> None:
+        """
+        Notices a resolution change and rebuilds the screen for it.
+        Called from the monitoring loop, so it also catches the mode
+        switches a game makes while it is starting.
+        """
+        if not self.visible:
+            return
+        try:
+            size = (self.root.winfo_screenwidth(),
+                    self.root.winfo_screenheight())
+        except tk.TclError:
+            return
+        if size == self._screen_size:
+            return
+
+        log(f"Screen resolution changed from {self._screen_size[0]}x"
+            f"{self._screen_size[1]} to {size[0]}x{size[1]} - "
+            f"rebuilding the loading screen")
+        try:
+            self._layout()
+        except tk.TclError:
+            pass
+
     def set_status(self, text: str) -> None:
+        self._status_text = text
         try:
             self.canvas.itemconfig(self.status_text_id, text=text)
         except tk.TclError:
@@ -762,6 +850,7 @@ class SplashScreen:
         """
         if not self.visible:
             return
+        self._progress = fraction
 
         try:
             if fraction is None:
@@ -1051,6 +1140,17 @@ SETTINGS: tuple[Setting, ...] = (
         "Before starting a game, any TeknoParrotUi.exe that is still\n"
         "running is closed - a leftover instance from a previous game\n"
         "otherwise blocks the new one or steals the foreground.",
+    ),
+    Setting(
+        "focus_during_delay", "bool", True,
+        "Focus the game during the delay",
+        "While the loading screen is held for the extra delay, the\n"
+        "game is given the foreground behind it. Games that switch to\n"
+        "exclusive fullscreen otherwise minimise themselves because\n"
+        "they never got focus, and come back without it. Off keeps the\n"
+        "loading screen in front for good - useful when a game draws\n"
+        "over it anyway. While off, ESC still cancels; while on, ESC\n"
+        "works up to the moment the game window appears.",
     ),
     Setting(
         "focus_guard", "bool", True,
@@ -2856,8 +2956,10 @@ def main() -> None:
                     log("Splash screen closed")
                 else:
                     # Hold the splash in front of the game window for
-                    # the rest of the delay, and don't pull focus to
-                    # the game yet - that happens once it's gone.
+                    # the rest of the delay. Being topmost is about
+                    # z-order only - the game can hold the foreground
+                    # underneath it, which is what keeps it from
+                    # minimising.
                     splash.keep_on_top()
 
             if state["measured_load_ms"] is None:
@@ -2870,7 +2972,16 @@ def main() -> None:
                 store_measured_load_ms(profile_name, game_name,
                                        state["measured_load_ms"])
 
-            if state["splash_closed"] and settings["focus_guard"]:
+            # Focus the game as soon as it is there - not only once
+            # the loading screen is gone. A game that switches to
+            # exclusive fullscreen while something else holds the
+            # foreground minimises itself, and comes back without
+            # focus; that is why the games that change resolution were
+            # exactly the ones losing focus when a delay was set.
+            # The splash stays topmost either way, so it keeps
+            # covering the game while the delay runs.
+            may_focus = state["splash_closed"] or settings["focus_during_delay"]
+            if may_focus and settings["focus_guard"]:
                 if win32gui.GetForegroundWindow() != hwnd:
                     if hwnd != state["last_focused_hwnd"]:
                         log(f"New target window detected: {describe_hwnd(hwnd)}")
@@ -2916,6 +3027,7 @@ def main() -> None:
                 return
 
         if not state["splash_closed"]:
+            splash.refresh_geometry()
             update_progress()
 
         # Schedule the next tick (milliseconds).

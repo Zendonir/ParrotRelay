@@ -20,9 +20,11 @@ ParrotRelay fixes that without touching TeknoParrot itself.
 
 Stored load time plus any extra delay is the expected total; one percent of it is one step of the bar, which simply follows the clock. Two things the clock cannot know are handled on top: while the game window has not appeared the bar stops at 99% instead of claiming to be done, and once the window is there the remaining time is known exactly, so the bar runs up to 100% and arrives precisely when the loading screen closes. A game with no measured time yet runs indeterminate rather than showing a made-up percentage.
 
+**Follows a resolution change.** Games routinely switch the display mode while starting. The loading screen notices and rebuilds itself for the new resolution — text, image and bar are re-measured and re-centred instead of hanging half off the screen.
+
 **Hides TeknoParrot's own windows** ("Game is running") as soon as they appear, before they can take the foreground. This is the actual fullscreen fix — refocusing after the fact is already too late.
 
-**Keeps focus on the game window** as a safety net, in case something else briefly steals the foreground.
+**Keeps focus on the game window** as a safety net, in case something else briefly steals the foreground. While the loading screen is held for the extra delay, the game is given the foreground behind it — games that switch to exclusive fullscreen otherwise minimise themselves because they never got focus, which is exactly why the resolution-changing games were the ones losing focus when a delay was set.
 
 **Closes a leftover TeknoParrot** before starting a new game. A `TeknoParrotUi.exe` still running from an earlier launch keeps its profile locked, steals the foreground, or stops the new one from starting at all.
 
@@ -68,6 +70,7 @@ Hover over a setting to see what it does. Everything the window writes is a plai
 | Background image | Overrides the automatic search in `LoadingBG\` and `Icons\` |
 | ESC cancels the launch | Turn off if ESC is wired to a cabinet button players can reach |
 | Close a running TeknoParrot first | Ends any leftover `TeknoParrotUi.exe` before starting the new one |
+| Focus the game during the delay | Gives the game the foreground behind the loading screen; off keeps the screen in front for good |
 | Keep game window focused | The continuous refocus safety net |
 | Hide TeknoParrot windows | The actual fullscreen fix — only turn off for troubleshooting |
 
