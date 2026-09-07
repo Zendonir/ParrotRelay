@@ -40,7 +40,7 @@ Stored load time plus any extra delay is the expected total; one percent of it i
    - **Platform Path:** `D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe`
    - **Command Line:** leave unchanged, e.g. `--startMinimized --profile=%rom.filename%.xml`
 
-No admin rights setup required. The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** has to be installed — see [Requirements](#requirements) for why.
+No admin rights setup required. The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** has to be installed on the machine — see [Requirements](#requirements).
 
 Double-click `ParrotRelay.exe` once afterwards: the settings window opens and its status line tells you whether TeknoParrot and your games were found.
 
@@ -118,7 +118,20 @@ A game's `.cfg` is written the first time that game is launched. It contains wha
 
 ## Requirements
 
-The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** must be installed — ParrotRelay uses the machine's runtime rather than shipping its own copies, so that an emulator started underneath it can never load the wrong one. If it is missing, ParrotRelay says so in its log and in the settings window.
+**Microsoft Visual C++ 2015-2022 Redistributable (x64)** — mandatory. ParrotRelay uses the machine's runtime instead of shipping its own copies, so that an emulator started underneath it can never load the wrong one. Without it installed, `ParrotRelay.exe` does not start at all.
+
+Official Microsoft download:
+
+**https://aka.ms/vs/17/release/vc_redist.x64.exe**
+
+That is the permanent Microsoft short link; [Microsoft's overview page](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) lists it alongside the other architectures. Install it once per machine and reboot if it asks you to.
+
+If it is missing, ParrotRelay says so in its log and in the status line of the settings window:
+
+```
+WARNING: no VCRUNTIME140.dll in System32 - the Microsoft Visual C++
+2015-2022 Redistributable is NOT installed.
+```
 
 ## Logging
 
