@@ -93,6 +93,16 @@ An exe sitting directly next to `TeknoParrotUi.exe` (the layout of older version
 
 A game's `.cfg` is written the first time it is launched and contains everything detected for it plus every available setting with its explanation. Lines starting with `#` follow the global defaults; removing the `#` pins that value for this game. A pinned line always wins over the global defaults — that is the whole point of the file — and keeps winning when the defaults change later. Existing files are never overwritten.
 
+## Requirement: Visual C++ Redistributable
+
+The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** must be installed on the machine. Windows searches `System32` *before* the current directory and before `PATH`, so with the redistributable installed every program — ParrotRelay, RPCS3, any other emulator — loads that one copy and the question never comes up.
+
+Without it, programs pick up whatever `VCRUNTIME140.dll` they can find. RPCS3 in particular refuses to start when the copy it loaded is not the properly installed one:
+
+> The module vcruntime140.dll was incorrectly installed at '...\RelayData\VCRUNTIME140.dll'
+
+If you see that, install the redistributable — that is the fix. ParrotRelay writes a warning line into its log and shows one in the settings window when the redistributable is missing.
+
 ## Building from source
 
 ```bash

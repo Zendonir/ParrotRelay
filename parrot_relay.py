@@ -31,6 +31,17 @@ Purpose:
        even though the game is still running.
 
 Requirements:
+    The Microsoft Visual C++ 2015-2022 Redistributable (x64) must be
+    installed on the machine:
+    https://aka.ms/vs/17/release/vc_redist.x64.exe
+    Windows searches System32 before the current directory and before
+    PATH, so with it installed every program - ParrotRelay, RPCS3, any
+    other emulator - loads that one copy. Without it, programs pick up
+    whatever copy they can find, and RPCS3 refuses to start when the
+    one it loaded is not the properly installed one ("The module
+    vcruntime140.dll was incorrectly installed at ..."). ParrotRelay
+    logs a warning when it is missing.
+
     pip install pywin32 psutil
     (tkinter is part of the Python standard library, no extra
     install needed. For background images in formats other than
@@ -396,6 +407,54 @@ def _report_runtime_dlls_on_path(path_value: str) -> None:
         if seen >= 5:
             log("NOTE: (more entries not checked)")
             return
+
+
+def system_vc_runtime_present() -> bool | None:
+    """
+    True if the VC runtime is properly installed in System32.
+
+    This matters more than it looks: Windows searches System32 BEFORE
+    the current directory and before PATH, so a properly installed
+    runtime is always found first and our own copy is never even
+    looked at. If an emulator loads OUR VCRUNTIME140.dll, that is
+    proof the Microsoft redistributable is missing on this machine -
+    no amount of cleaning up the environment can substitute for it.
+
+    None on non-Windows (where the question is meaningless).
+    """
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        return None
+    system32 = os.path.join(system_root, "System32")
+    try:
+        # Listing rather than isfile(): the file name's case is not
+        # guaranteed, and comparing lower-cased names is exact on
+        # every filesystem.
+        names = {name.lower() for name in os.listdir(system32)}
+    except OSError:
+        return None
+    return "vcruntime140.dll" in names
+
+
+def log_dll_environment() -> None:
+    """
+    One block in the log that answers the "which VC runtime does an
+    emulator get" question outright, instead of having to guess from
+    an error dialog.
+    """
+    present = system_vc_runtime_present()
+    if present is None:
+        return
+    if present:
+        log("VC runtime: properly installed in System32 - emulators will "
+            "use that one")
+        return
+
+    log("WARNING: no VCRUNTIME140.dll in System32 - the Microsoft Visual "
+        "C++ 2015-2022 Redistributable is NOT installed.")
+    log("WARNING: emulators such as RPCS3 will then pick up whatever copy "
+        "they can find (possibly ParrotRelay's own) and refuse to start. "
+        "Install it from https://aka.ms/vs/17/release/vc_redist.x64.exe")
 
 
 def build_child_environment() -> dict[str, str]:
@@ -1715,8 +1774,12 @@ class SettingsWindow:
     def _environment_summary(self) -> str:
         tp = "TeknoParrotUi.exe found" if os.path.isfile(TP_EXE) \
             else "WARNING: TeknoParrotUi.exe NOT found next to ParrotRelay.exe"
-        return (f"ParrotRelay {VERSION}   |   {tp}   |   "
-                f"{len(self.games)} games   |   data: {DATA_DIR}")
+        parts = [f"ParrotRelay {VERSION}", tp, f"{len(self.games)} games"]
+        if system_vc_runtime_present() is False:
+            parts.append("WARNING: Visual C++ 2015-2022 Redistributable "
+                         "missing - emulators may refuse to start")
+        parts.append(f"data: {DATA_DIR}")
+        return "   |   ".join(parts)
 
     def _confirm_discard(self) -> bool:
         from tkinter import messagebox
@@ -1961,6 +2024,8 @@ def main() -> None:
     log(f"Args     = {sys.argv[1:]}")
     log(f"Elevated = {is_admin()}")
     log(f"Runtime  = {describe_runtime_mode()}")
+    log(f"Workdir  = {os.getcwd()}")
+    log_dll_environment()
     cleanup_stale_runtime_dirs()
 
     if not os.path.isfile(TP_EXE) and sys.argv[1:]:
