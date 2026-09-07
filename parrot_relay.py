@@ -1024,11 +1024,12 @@ SETTINGS: tuple[Setting, ...] = (
         minimum=0, maximum=60_000,
     ),
     Setting(
-        "splash_timeout_ms", "int_ms", 0,
+        "splash_timeout_ms", "int_ms", 120_000,
         "Give up after (ms, 0 = never)",
-        "Safety net: if no game window shows up within this time,\n"
-        "the loading screen closes anyway instead of covering the\n"
-        "screen forever. 0 keeps waiting.",
+        "Safety net: if no game window shows up within this time, the\n"
+        "loading screen closes anyway instead of covering the screen\n"
+        "forever - the game may well be running fine behind it. Two\n"
+        "minutes by default, 0 waits indefinitely.",
         minimum=0, maximum=600_000,
     ),
     Setting(
@@ -2362,12 +2363,25 @@ def find_windows_of_pids(pids: set[int]) -> list[int]:
     return windows
 
 
+# Window classes that belong to the launch but are NOT the game:
+# TeknoParrot's DirectX proxy window, which exists only while the
+# hooks are being set up, and the console window of loaders such as
+# OpenParrotLoader64.exe. Mistaking one of those for the game window
+# closes the loading screen too early, measures a load time that is
+# far too short, and ties ParrotRelay's lifetime to a window that is
+# about to disappear.
+TRANSITIONAL_WINDOW_CLASSES = {"d3dproxywindow", "consolewindowclass"}
+
+# Logged once per window, not once per tick.
+_transitional_logged: set[int] = set()
+
+
 def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
     """
     Finds visible top-level windows whose process belongs to 'pids',
     except exclude_pid (= TeknoParrotUi.exe itself). Sorted by window
-    area descending; windows smaller than MIN_WINDOW_AREA are
-    filtered out.
+    area descending; windows smaller than MIN_WINDOW_AREA, and the
+    known transitional windows above, are filtered out.
     """
     candidates = []
 
@@ -2386,6 +2400,15 @@ def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
             return
         area = (rect[2] - rect[0]) * (rect[3] - rect[1])
         if area < MIN_WINDOW_AREA:
+            return
+        try:
+            window_class = win32gui.GetClassName(hwnd)
+        except Exception:
+            window_class = ""
+        if window_class.lower() in TRANSITIONAL_WINDOW_CLASSES:
+            if hwnd not in _transitional_logged:
+                _transitional_logged.add(hwnd)
+                log(f"Ignoring transitional window: {describe_hwnd(hwnd)}")
             return
         candidates.append((area, hwnd))
 
@@ -2749,6 +2772,9 @@ def main() -> None:
         "give_up_at": (time.monotonic() + splash_timeout_ms / 1000.0
                        if splash_timeout_ms > 0 else None),
         "cancelled": False,
+        # Every PID this launch has produced, so a game handed over by
+        # a loader is still recognised as ours.
+        "seen_pids": set(),
         # Filled in the moment the game window shows up: that is the
         # load time, without the extra delay that follows it.
         "measured_load_ms": None,
@@ -2783,19 +2809,33 @@ def main() -> None:
                     state["suppressed_hwnds_logged"].add(hwnd)
 
         # 2) Find/focus the real game window.
+        #
+        # Every process this launch has produced is remembered, not
+        # just the current one: TeknoParrot's loaders (BudgieLoader,
+        # VACUUM, OpenParrotLoader) hand the game over to another
+        # process and then exit, and looking only at the process we
+        # first saw would lose the game at that moment.
         if tp_launcher_running:
-            pids = get_descendant_pids(tp_pid)
-        elif state["game_pid_seen"] is not None:
-            pids = {state["game_pid_seen"]}
-        else:
-            pids = set()
+            state["seen_pids"] |= get_descendant_pids(tp_pid)
+        if state["game_pid_seen"] is not None:
+            state["seen_pids"] |= get_descendant_pids(state["game_pid_seen"])
 
-        candidates = find_candidate_windows(pids, exclude_pid=tp_pid)
+        candidates = find_candidate_windows(state["seen_pids"],
+                                            exclude_pid=tp_pid)
 
         if candidates:
             hwnd = candidates[0]
-            if state["game_pid_seen"] is None:
-                _, state["game_pid_seen"] = win32process.GetWindowThreadProcessId(hwnd)
+            # Adopt the window's process as "the game" - also when the
+            # one we were watching has gone and another has taken over.
+            if state["game_pid_seen"] is None or \
+                    not psutil.pid_exists(state["game_pid_seen"]):
+                _, new_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if new_pid != state["game_pid_seen"]:
+                    if state["game_pid_seen"] is not None:
+                        log(f"Game process changed: PID "
+                            f"{state['game_pid_seen']} is gone, the window now "
+                            f"belongs to PID {new_pid} - staying alive")
+                    state["game_pid_seen"] = new_pid
 
             # The real game window provably exists, so the loading
             # screen may go - after the configured extra delay, for
@@ -2856,7 +2896,11 @@ def main() -> None:
         # Exit condition: launcher gone AND (either no game was ever
         # detected, OR the detected game is provably no longer
         # running).
-        if not tp_launcher_running:
+        if not tp_launcher_running and not candidates:
+            # No game window standing any more - only now is the
+            # launch really over. Checking the window rather than just
+            # the process is what keeps a loader's hand-over from
+            # looking like the end of the game.
             if state["game_pid_seen"] is None:
                 log("No game process was ever detected and the "
                     "launcher has exited - proxy shutting down.")
@@ -2866,7 +2910,8 @@ def main() -> None:
                 return
             if not psutil.pid_exists(state["game_pid_seen"]):
                 log(f"Game process (PID {state['game_pid_seen']}) has "
-                    f"exited - proxy shutting down.")
+                    f"exited and no game window is left - proxy shutting "
+                    f"down.")
                 splash.root.quit()
                 return
 

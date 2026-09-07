@@ -64,7 +64,7 @@ Hover over a setting to see what it does. Everything the window writes is a plai
 |---|---|
 | Show loading screen | Off = no splash for this game; the window handling keeps working |
 | Keep loading screen up for (ms) | Extra time after the game window appeared, for games that show their window early but keep loading |
-| Give up after (ms) | Safety net: closes the splash if no game window ever appears (`0` = wait forever) |
+| Give up after (ms) | Safety net: closes the splash if no game window ever appears — two minutes by default, `0` waits forever |
 | Background image | Overrides the automatic search in `LoadingBG\` and `Icons\` |
 | ESC cancels the launch | Turn off if ESC is wired to a cabinet button players can reach |
 | Close a running TeknoParrot first | Ends any leftover `TeknoParrotUi.exe` before starting the new one |
