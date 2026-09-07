@@ -14,16 +14,24 @@ Purpose:
        game-specific background image from the LoadingBG folder,
        while no real game window exists yet. Closes automatically
        once the game window is found.
-    2. Actively hides TeknoParrot's own windows (main window, "Game is
+    2. Closes a TeknoParrotUi.exe that is still running from an
+       earlier launch before starting the new one - a leftover
+       instance keeps its profile locked, steals the foreground or
+       stops the new one from starting at all. Politely first
+       (WM_CLOSE), then terminate, then kill.
+    3. Lets ESC cancel a launch while the loading screen is up:
+       TeknoParrot and every process it started are ended, so a
+       cancelled launch doesn't leave a half-started game behind.
+    4. Actively hides TeknoParrot's own windows (main window, "Game is
        running") AS SOON AS they become visible - before they can
        ever take focus/foreground. This is the core fix: with
        exclusive fullscreen (e.g. BlazBlue), a single focus change
        away from the game is enough for it to drop out of fullscreen
        - refocusing afterwards is already too late.
-    3. Additionally, as a safety net, continuously focuses the real
+    5. Additionally, as a safety net, continuously focuses the real
        game window in case some other window (HyperOverlay etc.)
        briefly comes to the foreground.
-    4. Stays alive until the ACTUAL game has closed - not just until
+    6. Stays alive until the ACTUAL game has closed - not just until
        TeknoParrotUi.exe (a pure launcher stub that exits by itself
        shortly after starting the game) disappears. Otherwise HyperHQ
        (which watches this proxy as "the emulator") would wrongly
@@ -329,6 +337,10 @@ POLL_INTERVAL = 0.05
 # own small "Game is running" window) don't accidentally get treated
 # as "the game window". Adjust if needed.
 MIN_WINDOW_AREA = 200 * 150
+
+# How long to wait per step when closing a leftover TeknoParrotUi.exe
+# (politely, then terminate, then kill).
+TP_CLOSE_GRACE_SECONDS = 3.0
 
 # How long the splash stays up AFTER the game window was found, in
 # milliseconds. 0 = old behaviour (close immediately). Overridable
@@ -684,6 +696,13 @@ class SplashScreen:
         )
 
         self.root.update_idletasks()
+        # The splash is topmost anyway; grabbing the keyboard as well is
+        # what lets it react to ESC.
+        if visible:
+            try:
+                self.root.focus_force()
+            except tk.TclError:
+                pass
         self.root.update()
 
     def set_status(self, text: str) -> None:
@@ -926,6 +945,20 @@ SETTINGS: tuple[Setting, ...] = (
         "Background image",
         "Overrides the automatic search in LoadingBG\\ and Icons\\.\n"
         "Leave empty for the automatic choice.",
+    ),
+    Setting(
+        "esc_cancels_launch", "bool", True,
+        "ESC cancels the launch",
+        "While the loading screen is up, ESC aborts: TeknoParrot and\n"
+        "everything it started are ended and ParrotRelay quits. Turn\n"
+        "off if ESC is wired to a cabinet button that players reach.",
+    ),
+    Setting(
+        "close_running_teknoparrot", "bool", True,
+        "Close a running TeknoParrot first",
+        "Before starting a game, any TeknoParrotUi.exe that is still\n"
+        "running is closed - a leftover instance from a previous game\n"
+        "otherwise blocks the new one or steals the foreground.",
     ),
     Setting(
         "focus_guard", "bool", True,
@@ -1828,6 +1861,137 @@ def get_descendant_pids(root_pid: int) -> set[int]:
     return pids
 
 
+def terminate_processes(procs: list, what: str) -> list:
+    """
+    Ends the given processes: WM_CLOSE to their windows first, then
+    terminate, then kill - each step only for what is still alive
+    after the previous one. Returns whatever survived all of it.
+
+    A process we are not allowed to touch (running elevated while
+    ParrotRelay is not) is logged rather than silently ignored: the
+    user needs to know why it is still there.
+    """
+    if not procs:
+        return []
+
+    pids = {proc.pid for proc in procs}
+    for hwnd in find_windows_of_pids(pids):
+        try:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        except Exception:
+            pass
+
+    _, alive = psutil.wait_procs(procs, timeout=TP_CLOSE_GRACE_SECONDS)
+
+    for proc in alive:
+        try:
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.AccessDenied:
+            log(f"WARNING: not allowed to close {what} (PID {proc.pid}) - is "
+                f"it running as administrator while ParrotRelay is not?")
+
+    _, alive = psutil.wait_procs(alive, timeout=TP_CLOSE_GRACE_SECONDS)
+
+    for proc in alive:
+        try:
+            proc.kill()
+            log(f"{what} (PID {proc.pid}) did not react - killed")
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.AccessDenied:
+            pass
+
+    _, still_alive = psutil.wait_procs(alive, timeout=TP_CLOSE_GRACE_SECONDS)
+    return still_alive
+
+
+def close_running_teknoparrot() -> None:
+    """
+    Closes every TeknoParrotUi.exe that is still running before a new
+    one is started. A leftover instance from a previous game keeps its
+    profile locked, pops its window into the foreground, or simply
+    refuses to let a second one start.
+
+    Asks politely first (WM_CLOSE to its windows), then terminates,
+    then kills - each step only for what is still alive afterwards.
+    A process we are not allowed to touch (TP running elevated while
+    ParrotRelay is not) is logged rather than silently ignored: the
+    user needs to know why the leftover is still there.
+    """
+    victims = []
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            if name != "teknoparrotui.exe":
+                continue
+            if proc.pid == os.getpid():
+                continue
+            victims.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if not victims:
+        return
+
+    for proc in victims:
+        log(f"TeknoParrotUi.exe already running (PID {proc.pid}, "
+            f"{proc.info.get('exe') or 'path unknown'}) - closing it first")
+
+    still_alive = terminate_processes(victims, "TeknoParrotUi.exe")
+    if still_alive:
+        log(f"WARNING: {len(still_alive)} TeknoParrotUi.exe process(es) could "
+            f"not be closed - starting the new one anyway")
+    else:
+        log("Previous TeknoParrotUi.exe closed")
+
+
+def collect_launch_processes(tp_pid: int, game_pid: int | None) -> list:
+    """
+    The whole tree belonging to this launch: TeknoParrotUi.exe, every
+    process below it, and the detected game (which TP may have
+    reparented away, so it is looked up separately).
+    """
+    procs = {}
+
+    def add(pid: int) -> None:
+        try:
+            proc = psutil.Process(pid)
+            procs[proc.pid] = proc
+            for child in proc.children(recursive=True):
+                procs[child.pid] = child
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    add(tp_pid)
+    if game_pid is not None:
+        add(game_pid)
+    return list(procs.values())
+
+
+def find_windows_of_pids(pids: set[int]) -> list[int]:
+    """All visible top-level windows belonging to any of these PIDs."""
+    windows = []
+
+    def callback(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        except Exception:
+            return
+        if pid in pids:
+            windows.append(hwnd)
+
+    try:
+        win32gui.EnumWindows(callback, None)
+    except Exception:
+        log("ERROR in EnumWindows (windows of PIDs):\n" + traceback.format_exc())
+
+    return windows
+
+
 def find_candidate_windows(pids: set[int], exclude_pid: int) -> list[int]:
     """
     Finds visible top-level windows whose process belongs to 'pids',
@@ -2065,6 +2229,9 @@ def main() -> None:
     splash_extra_delay_ms = settings["splash_extra_delay_ms"]
     splash_timeout_ms = settings["splash_timeout_ms"]
 
+    if settings["close_running_teknoparrot"]:
+        close_running_teknoparrot()
+
     try:
         proc = subprocess.Popen(
             [TP_EXE] + args,
@@ -2087,6 +2254,35 @@ def main() -> None:
         log(f"Splash screen disabled for '{game_name}' "
             f"(profile: {profile_name or '?'}) - window handling only")
 
+    def cancel_launch(_event=None) -> None:
+        """
+        ESC on the loading screen: stop the whole launch. Ending just
+        ParrotRelay would leave TeknoParrot and a half-started game
+        behind, which is exactly the mess this is meant to get out of.
+        """
+        if state["cancelled"]:
+            return
+        state["cancelled"] = True
+
+        log("ESC pressed - cancelling the launch")
+        splash.set_status("Cancelling...")
+        try:
+            splash.root.update()
+        except tk.TclError:
+            pass
+
+        procs = collect_launch_processes(tp_pid, state["game_pid_seen"])
+        log(f"Ending {len(procs)} process(es) belonging to this launch")
+        still_alive = terminate_processes(procs, "launched process")
+        if still_alive:
+            log(f"WARNING: {len(still_alive)} process(es) survived the "
+                f"cancellation")
+
+        if not state["splash_closed"]:
+            splash.close()
+            state["splash_closed"] = True
+        splash.root.quit()
+
     # Shared state for the recurring tick callback. A dict instead of
     # individual nonlocal variables, because tick() is a nested
     # function that gets called repeatedly via root.after(), so
@@ -2104,9 +2300,16 @@ def main() -> None:
         # Deadline for the "no game window ever showed up" safety net.
         "give_up_at": (time.monotonic() + splash_timeout_ms / 1000.0
                        if splash_timeout_ms > 0 else None),
+        "cancelled": False,
     }
 
+    if settings["esc_cancels_launch"] and settings["splash_enabled"]:
+        splash.root.bind("<Escape>", cancel_launch)
+        log("ESC cancels the launch while the loading screen is up")
+
     def tick() -> None:
+        if state["cancelled"]:
+            return
         tp_launcher_running = proc.poll() is None
 
         if not tp_launcher_running and not state["tp_launcher_exited_logged"]:

@@ -15,8 +15,10 @@ ParrotRelay sits between HyperHQ and TeknoParrotUi.exe and fixes this without to
 1. **Its own fullscreen loading screen** — shows the real game name (read from TeknoParrot's profile XML) and, optionally, a game-specific background image while the game loads. Closes automatically as soon as the real game window appears.
 2. **Actively suppresses TeknoParrot's own "Game is running" window**, before it can ever take focus.
 3. **Continuously keeps focus on the real game window** as a safety net, in case something else briefly steals the foreground.
-4. **Settings window** — double-click `ParrotRelay.exe` and you get a UI to configure all of this per game, no manual file editing needed.
-5. **Stays alive until the game itself actually closes** — not just until TeknoParrot's own launcher stub exits (which it does by design shortly after launching the game). Otherwise HyperHQ would wrongly report "game closed" while the game is still running.
+4. **ESC cancels a launch** — while the loading screen is up, ESC ends TeknoParrot and every process it started, instead of leaving a half-started game behind.
+5. **Closes a leftover TeknoParrot** before starting a new game — a previous instance otherwise blocks the launch or steals the foreground.
+6. **Settings window** — double-click `ParrotRelay.exe` and you get a UI to configure all of this per game, no manual file editing needed.
+7. **Stays alive until the game itself actually closes** — not just until TeknoParrot's own launcher stub exits (which it does by design shortly after launching the game). Otherwise HyperHQ would wrongly report "game closed" while the game is still running.
 
 ## Installation
 
@@ -60,6 +62,8 @@ Everything it writes is a plain text file you can also edit by hand.
 | Keep loading screen up for (ms) | Extra time after the game window appeared |
 | Give up after (ms) | Safety net: closes the splash if no game window ever shows up (0 = wait forever) |
 | Background image | Overrides the automatic search in `LoadingBG\` and `Icons\` |
+| ESC cancels the launch | While the loading screen is up, ESC ends TeknoParrot and everything it started |
+| Close a running TeknoParrot first | Ends any leftover `TeknoParrotUi.exe` before starting the new one |
 | Keep game window focused | The continuous refocus safety net |
 | Hide TeknoParrot windows | The actual fullscreen fix — only turn off for troubleshooting |
 
