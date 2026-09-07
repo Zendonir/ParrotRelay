@@ -348,6 +348,11 @@ PILLOW_IMAGE_EXTS = (".jpg", ".jpeg", ".bmp", ".webp")
 # window is detected and hidden, the smaller the window of time in
 # which the game could lose its exclusive fullscreen mode.
 POLL_INTERVAL = 0.05
+# Once the game window is up, the tight loop is no longer needed: the
+# race it exists for (a TP window grabbing focus before the game is
+# there) is over. The loop then runs for as long as the game does, so
+# a calmer interval keeps it off the cabinet's CPU.
+POLL_INTERVAL_RUNNING = 0.25
 # Minimum size (pixel area) so tiny helper windows (tooltips, TP's
 # own small "Game is running" window) don't accidentally get treated
 # as "the game window". Adjust if needed.
@@ -794,6 +799,24 @@ class SplashScreen:
             pass
 
     def close(self) -> None:
+        """
+        Hides the loading screen - deliberately NOT destroy().
+
+        Destroying the root window ends Tkinter's mainloop, and with
+        it the recurring tick() that does the actual work: keeping the
+        game focused, hiding TP's windows, and staying alive until the
+        game really closes. Closing the splash used to end ParrotRelay
+        a millisecond later, so none of that ever ran. Hiding the
+        window leaves the loop intact; the window is destroyed at the
+        very end, when the game is gone.
+        """
+        try:
+            self.root.withdraw()
+        except tk.TclError:
+            pass
+
+    def destroy(self) -> None:
+        """Really tears the window down - only at the end of a run."""
         try:
             self.root.destroy()
         except tk.TclError:
@@ -2442,71 +2465,113 @@ def suppress_window(hwnd: int) -> bool:
         return False
 
 
+# Remembers the last focus problem per window, so a game we simply
+# cannot focus doesn't fill the log with one line every tick.
+_focus_problem_logged: dict[int, str] = {}
+# ... and when to try that window again. Some games keep the
+# foreground themselves and refuse every request; retrying four times
+# a second would only make their window flicker.
+_focus_retry_after: dict[int, float] = {}
+FOCUS_BACKOFF_SECONDS = 5.0
+
+
+def _log_focus_problem(hwnd: int, message: str) -> None:
+    if _focus_problem_logged.get(hwnd) == message:
+        return
+    _focus_problem_logged[hwnd] = message
+    log(message)
+
+
 def force_focus(hwnd: int) -> None:
     """
-    Forces focus onto hwnd, even when Windows' foreground lock would
-    normally prevent it. Trick: briefly attach the currently active
-    window's input thread to our own thread (AttachThreadInput) -
-    this bypasses the lock, see e.g. the MSDN documentation for
-    SetForegroundWindow.
+    Brings hwnd to the foreground, working around Windows' foreground
+    lock: briefly attaching the active window's input thread to ours
+    (AttachThreadInput) makes SetForegroundWindow succeed where it
+    would otherwise be ignored.
+
+    Every step stands on its own. AttachThreadInput can be refused
+    outright ("Zugriff verweigert") for a game running at a higher
+    integrity level or behind a protective loader - that used to abort
+    the whole attempt, so the game never came forward at all. Now the
+    attach is merely an aid: if it fails, the window is still
+    restored, raised and asked for the foreground, and if THAT is
+    ignored too, a brief topmost toggle pulls it up, which needs no
+    foreground rights.
 
     Some candidate windows (e.g. TeknoParrot's short-lived
     D3DProxyWindow during DirectX hooking) only exist for a fraction
-    of a second. Between "found as a candidate" and "focusing here",
-    the window may already be destroyed - this is normal and not a
-    real error, so it's checked up front via IsWindow and, in that
-    case, aborted silently (without an ERROR log).
+    of a second, so a window that has just vanished is skipped
+    quietly rather than logged as an error.
     """
     if not win32gui.IsWindow(hwnd):
-        log(f"Target window hwnd={hwnd} no longer exists (short-lived "
-            f"transition window) - skipping.")
+        return
+    if time.monotonic() < _focus_retry_after.get(hwnd, 0.0):
         return
 
-    fg_thread = 0
-    target_thread = 0
-    attached_fg = False
-    attached_target = False
+    cur_thread = win32api.GetCurrentThreadId()
+    attached = []
+
+    def attach(thread_id: int) -> None:
+        if not thread_id or thread_id == cur_thread:
+            return
+        try:
+            win32process.AttachThreadInput(cur_thread, thread_id, True)
+            attached.append(thread_id)
+        except Exception as exc:
+            _log_focus_problem(
+                hwnd, f"Note: cannot attach to the input thread of "
+                      f"{describe_hwnd(hwnd)} ({exc}) - focusing without it")
 
     try:
-        cur_thread = win32api.GetCurrentThreadId()
         fg_hwnd = win32gui.GetForegroundWindow()
-
         if fg_hwnd:
-            fg_thread, _ = win32process.GetWindowThreadProcessId(fg_hwnd)
-        target_thread, _ = win32process.GetWindowThreadProcessId(hwnd)
+            attach(win32process.GetWindowThreadProcessId(fg_hwnd)[0])
+        attach(win32process.GetWindowThreadProcessId(hwnd)[0])
 
-        if fg_thread and fg_thread != cur_thread:
-            win32process.AttachThreadInput(cur_thread, fg_thread, True)
-            attached_fg = True
-        if target_thread and target_thread != cur_thread:
-            win32process.AttachThreadInput(cur_thread, target_thread, True)
-            attached_target = True
+        for step in (lambda: win32gui.ShowWindow(hwnd, win32con.SW_RESTORE),
+                     lambda: win32gui.BringWindowToTop(hwnd),
+                     lambda: win32gui.SetForegroundWindow(hwnd)):
+            try:
+                step()
+            except Exception:
+                if not win32gui.IsWindow(hwnd):
+                    return  # vanished mid-way, nothing to report
+                continue
 
-        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.BringWindowToTop(hwnd)
-        win32gui.SetForegroundWindow(hwnd)
+        # Last resort: briefly making the window topmost raises it
+        # without needing foreground rights, and is undone right after
+        # so the game is not left permanently on top.
+        if win32gui.GetForegroundWindow() != hwnd:
+            try:
+                for flag in (win32con.HWND_TOPMOST, win32con.HWND_NOTOPMOST):
+                    win32gui.SetWindowPos(
+                        hwnd, flag, 0, 0, 0, 0,
+                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE |
+                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+            except Exception:
+                pass
 
-    except win32gui.error as e:
-        if len(e.args) >= 1 and e.args[0] == 1400:
-            # ERROR_INVALID_WINDOW_HANDLE - the window disappeared
-            # between being found and being focused (race condition
-            # with short-lived transition windows). Not a real error,
-            # ignore briefly.
-            log(f"Target window hwnd={hwnd} disappeared while "
-                f"focusing - skipping.")
+        if win32gui.IsWindow(hwnd) and win32gui.GetForegroundWindow() != hwnd:
+            _log_focus_problem(
+                hwnd, f"WARNING: could not bring {describe_hwnd(hwnd)} to the "
+                      f"foreground - it may be handling that itself. Backing "
+                      f"off to one attempt every {FOCUS_BACKOFF_SECONDS:.0f} s")
+            _focus_retry_after[hwnd] = time.monotonic() + FOCUS_BACKOFF_SECONDS
         else:
-            log("ERROR while focusing:\n" + traceback.format_exc())
+            _focus_problem_logged.pop(hwnd, None)
+            _focus_retry_after.pop(hwnd, None)
+
     except Exception:
-        log("ERROR while focusing:\n" + traceback.format_exc())
+        if win32gui.IsWindow(hwnd):
+            _log_focus_problem(hwnd, "ERROR while focusing:\n"
+                               + traceback.format_exc())
 
     finally:
-        try:
-            if attached_fg:
-                win32process.AttachThreadInput(cur_thread, fg_thread, False)
-            if attached_target:
-                win32process.AttachThreadInput(cur_thread, target_thread, False)
-        except Exception:
-            pass
+        for thread_id in attached:
+            try:
+                win32process.AttachThreadInput(cur_thread, thread_id, False)
+            except Exception:
+                pass
 
 
 def describe_hwnd(hwnd: int) -> str:
@@ -2809,13 +2874,16 @@ def main() -> None:
             update_progress()
 
         # Schedule the next tick (milliseconds).
-        splash.root.after(int(POLL_INTERVAL * 1000), tick)
+        interval = (POLL_INTERVAL_RUNNING if state["measured_load_ms"] is not None
+                    else POLL_INTERVAL)
+        splash.root.after(int(interval * 1000), tick)
 
     # Kick off the first tick, then let Tkinter's own event loop take
     # over - it drives both the splash window and (via the recurring
     # after() calls) the complete monitoring logic.
     splash.root.after(0, tick)
     splash.root.mainloop()
+    splash.destroy()
 
     log("ParrotRelay stopped")
     log("=" * 60 + "\n")
