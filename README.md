@@ -118,7 +118,7 @@ A game's `.cfg` is written the first time that game is launched. It contains wha
 
 - lines starting with `#` follow the global defaults
 - removing the `#` pins that value for this game — a pinned line always wins over the global defaults, and keeps winning when those change later
-- `measured_load_ms` is written by ParrotRelay itself after every launch; delete the line to start measuring that game afresh
+- `measured_load_ms` is written by ParrotRelay itself after every launch; delete the line to start measuring that game afresh. `measured_with` records the version that took the measurement — a time from a version that could still mistake a loader's window for the game is discarded rather than averaged into a new one
 
 ## Requirements
 
