@@ -141,6 +141,7 @@ Settings window:
       - per-game overrides; a game only stores what actually differs,
         so changing a default still reaches every game that never
         overrode it
+      - double-click a game to launch it, loading screen and all
       - preview of the loading screen (checks the background image)
       - "Apply to all games" for cabinet-wide settings
       - shortcuts to the log and the data folder
@@ -1430,11 +1431,109 @@ def list_known_games() -> list[tuple[str, str]]:
 
 
 def open_in_explorer(path: str) -> None:
-    """Opens a file or folder in Explorer. Windows-only, by design."""
+    """
+    Opens a file or folder in Explorer. Windows-only, by design.
+
+    Deliberately NOT os.startfile(): the shell resolves an
+    extension-less path through PATHEXT, so asking it to open the
+    folder "...\\ParrotRelay" would find "...\\ParrotRelay.exe" next to
+    it and start a second instance of ParrotRelay instead. Handing the
+    path to explorer.exe as an argument leaves no room for that.
+    """
+    path = os.path.normpath(path)
     try:
-        os.startfile(path)  # type: ignore[attr-defined]
+        if os.path.isdir(path):
+            subprocess.Popen(["explorer.exe", path])
+        else:
+            # /select, opens the containing folder with the file
+            # highlighted - handier than opening the file itself.
+            subprocess.Popen(["explorer.exe", f"/select,{path}"])
     except Exception:
         log(f"Could not open: {path}\n" + traceback.format_exc())
+
+
+def launch_game(profile_name: str) -> bool:
+    """
+    Starts a game the way HyperSpin would: a fresh ParrotRelay with
+    that profile, so the launch goes through the whole normal path -
+    loading screen, window handling and all. Detached, so it keeps
+    running whatever happens to the settings window.
+    """
+    if getattr(sys, "frozen", False):
+        command = [sys.executable]
+    else:
+        command = [sys.executable, os.path.abspath(__file__)]
+    command += ["--startMinimized", f"--profile={profile_name}.xml"]
+
+    # DETACHED_PROCESS (0x8): no shared console, no parent to outlive.
+    creation_flags = 0x00000008 if os.name == "nt" else 0
+
+    try:
+        subprocess.Popen(command, cwd=TP_DIR, creationflags=creation_flags)
+        log(f"Launching '{profile_name}' from the settings window")
+        return True
+    except Exception:
+        log(f"Could not launch '{profile_name}':\n" + traceback.format_exc())
+        return False
+
+
+class Tooltip:
+    """
+    The little yellow box that explains a setting on hover. The
+    explanations used to sit permanently under every field, which made
+    the window tall and noisy; on hover they are there when wanted and
+    out of the way otherwise.
+    """
+
+    DELAY_MS = 450
+
+    def __init__(self, widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        self._after_id = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._cancel()
+        self._after_id = self.widget.after(self.DELAY_MS, self._show)
+
+    def _cancel(self) -> None:
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+
+    def _show(self) -> None:
+        if self.tip is not None:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+            self.tip = tk.Toplevel(self.widget)
+            self.tip.wm_overrideredirect(True)
+            self.tip.wm_geometry(f"+{x}+{y}")
+            tk.Label(
+                self.tip, text=self.text, justify="left",
+                background="#ffffe0", foreground="#000000",
+                relief="solid", borderwidth=1, padx=8, pady=6,
+                wraplength=420,
+            ).pack()
+        except tk.TclError:
+            self.tip = None
+
+    def _hide(self, _event=None) -> None:
+        self._cancel()
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except tk.TclError:
+                pass
+            self.tip = None
 
 
 class SettingsWindow:
@@ -1565,6 +1664,10 @@ class SettingsWindow:
         scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Double-Button-1>", self._launch_selected)
+
+        ttk.Label(left, text="Double-click a game to launch it",
+                  foreground="#888888").pack(anchor="w", pady=(4, 0))
 
         # Right: the settings for whatever is selected
         right = ttk.Frame(panes, padding=(8, 0, 0, 0))
@@ -1599,9 +1702,8 @@ class SettingsWindow:
         self.inherit_button = ttk.Button(
             actions, text="Use global defaults", command=self._inherit_all)
         self.inherit_button.pack(side="left")
-        self.pin_button = ttk.Button(
-            actions, text="Pin all values", command=self._pin_all)
-        self.pin_button.pack(side="left", padx=6)
+        ttk.Button(actions, text="Load defaults",
+                   command=self._load_defaults).pack(side="left", padx=6)
         ttk.Button(actions, text="Preview loading screen",
                    command=self._preview).pack(side="right")
 
@@ -1610,14 +1712,14 @@ class SettingsWindow:
         from tkinter import ttk
 
         for row, setting in enumerate(SETTINGS):
-            ttk.Label(self.form, text=setting.label).grid(
-                row=row * 2, column=0, sticky="w", pady=(6, 0))
+            label = ttk.Label(self.form, text=setting.label)
+            label.grid(row=row, column=0, sticky="w", pady=6)
 
             if setting.kind == "bool":
                 var: tk.Variable = tk.BooleanVar()
                 widget = ttk.Checkbutton(self.form, variable=var,
                                          command=self._mark_dirty)
-                widget.grid(row=row * 2, column=1, sticky="w", pady=(6, 0))
+                widget.grid(row=row, column=1, sticky="w", pady=6)
             elif setting.kind == "int_ms":
                 var = tk.StringVar()
                 var.trace_add("write", lambda *_: self._mark_dirty())
@@ -1625,24 +1727,24 @@ class SettingsWindow:
                     self.form, textvariable=var, width=12,
                     from_=setting.minimum, to=setting.maximum, increment=500,
                 )
-                widget.grid(row=row * 2, column=1, sticky="w", pady=(6, 0))
+                widget.grid(row=row, column=1, sticky="w", pady=6)
             else:
                 var = tk.StringVar()
                 var.trace_add("write", lambda *_: self._mark_dirty())
-                box = ttk.Frame(self.form)
-                box.grid(row=row * 2, column=1, sticky="ew", pady=(6, 0))
-                ttk.Entry(box, textvariable=var, width=30).pack(
+                widget = ttk.Frame(self.form)
+                widget.grid(row=row, column=1, sticky="ew", pady=6)
+                ttk.Entry(widget, textvariable=var, width=30).pack(
                     side="left", fill="x", expand=True)
-                ttk.Button(box, text="Browse...", width=10,
+                ttk.Button(widget, text="Browse...", width=10,
                            command=self._browse_background).pack(
                     side="left", padx=(6, 0))
 
-            # wraplength so a long explanation re-flows instead of
-            # forcing the whole window to be that wide.
-            ttk.Label(self.form, text=setting.help_text.replace("\n", " "),
-                      foreground="#555555", wraplength=380,
-                      justify="left").grid(
-                row=row * 2 + 1, column=0, columnspan=2, sticky="w")
+            # The explanation lives in a tooltip now - on the label and
+            # on the field itself, so it shows up wherever the pointer
+            # happens to be.
+            help_text = setting.help_text.replace("\n", " ")
+            Tooltip(label, help_text)
+            Tooltip(widget, help_text)
 
             self.vars[setting.key] = var
 
@@ -1778,7 +1880,6 @@ class SettingsWindow:
                 f"Applies to every game that does not override it  -  "
                 f"{GLOBAL_CONFIG_PATH}")
             self.inherit_button.state(["disabled"])
-            self.pin_button.state(["disabled"])
         else:
             name = dict(self.games).get(profile, profile)
             path = game_config_path(profile) or "?"
@@ -1794,7 +1895,6 @@ class SettingsWindow:
                 f"   -   {measured_text}"
                 f"   -   background: {bg or 'none found'}")
             self.inherit_button.state(["!disabled"])
-            self.pin_button.state(["!disabled"])
 
         self.dirty = False
 
@@ -1893,33 +1993,60 @@ class SettingsWindow:
         self._load_current()
         self.status_var.set(f"\"{name}\" follows the global defaults again")
 
-    def _pin_all(self) -> None:
+    def _launch_selected(self, _event=None) -> None:
         """
-        Writes every value as an explicit line for this game, even the
-        ones that currently match the global defaults. For when a game
-        should be nailed down as it is and stay that way no matter
-        what the defaults do later.
-        """
-        values = self._collect_values()
-        if values is None:
-            return
-        profile = self.current_profile
-        if profile is None:
-            return
+        Double-click on a game: start it exactly as HyperSpin would,
+        loading screen included. Useful for checking a background
+        image or a delay without walking over to the cabinet's
+        frontend.
 
+        The settings window only minimises - the game takes the
+        screen, and the window is still there afterwards.
+        """
+        from tkinter import messagebox
+
+        selection = self.tree.selection()
+        if not selection or selection[0] == "__global__":
+            return
+        profile = selection[0]
         name = dict(self.games).get(profile, profile)
-        if not write_config_file(
-                game_config_path(profile), values,
-                game_config_header(profile, name,
-                                   find_background_image(profile)),
-                active_keys={setting.key for setting in SETTINGS},
-                stats=self._stats_of(profile)):
+
+        if not os.path.isfile(TP_EXE):
+            messagebox.showerror(
+                "ParrotRelay",
+                f"TeknoParrotUi.exe was not found in:\n{TP_DIR}\n\n"
+                f"ParrotRelay has to sit in or next to the TeknoParrot "
+                f"folder to launch anything.", parent=self.root)
             return
 
-        self.dirty = False
-        self._refresh_game_list()
-        self._load_current()
-        self.status_var.set(f"All values pinned for \"{name}\"")
+        if self.dirty and not messagebox.askyesno(
+                "ParrotRelay",
+                f"\"{name}\" has unsaved changes that would not apply to "
+                f"this launch.\n\nLaunch anyway?", parent=self.root):
+            return
+
+        if launch_game(profile):
+            self.status_var.set(f"Launching \"{name}\"...")
+            self.root.iconify()
+        else:
+            messagebox.showerror(
+                "ParrotRelay", f"Could not launch \"{name}\" - see the log.",
+                parent=self.root)
+
+    def _load_defaults(self) -> None:
+        """
+        Puts ParrotRelay's built-in defaults into the form. Nothing is
+        written until Save, so it is a safe way to see what the
+        factory settings were and to get back to them.
+        """
+        for setting in SETTINGS:
+            var = self.vars[setting.key]
+            if setting.kind == "bool":
+                var.set(bool(setting.default))
+            else:
+                var.set(str(setting.default))
+        self.dirty = True
+        self.status_var.set("Built-in defaults loaded - Save to keep them")
 
     def _apply_to_all(self) -> None:
         """

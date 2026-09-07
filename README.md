@@ -51,13 +51,14 @@ Start `ParrotRelay.exe` **without arguments** — double-click it instead of let
 ![ParrotRelay settings window](settings-window.png)
 
 - every TeknoParrot game is listed, with a search box; the *Configured* column shows how many values a game has of its own
+- **double-click a game to launch it**, loading screen and all — the quickest way to try a setting without walking over to the frontend. The window minimises while the game runs
 - **Global defaults** (the first entry) apply to every game; a game only stores what actually differs from them, so changing a default still reaches every game that never overrode it
-- **Pin all values** writes every value as an explicit line for one game, so it keeps them whatever the defaults do later; **Use global defaults** is the opposite and drops everything stored for that game
+- **Use global defaults** drops everything stored for one game; **Load defaults** puts ParrotRelay's built-in values into the form, so you can see what they were and get back to them
 - **Apply to all games** writes one set of values to every game at once, for cabinet-wide settings
 - **Preview loading screen** shows the splash exactly as it will look at launch — the quickest way to check a background image
 - **Open ParrotRelay folder** and **Open log** for everything else
 
-Everything the window writes is a plain text file you can also edit by hand.
+Hover over a setting to see what it does. Everything the window writes is a plain text file you can also edit by hand.
 
 | Setting | What it does |
 |---|---|
