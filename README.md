@@ -13,7 +13,9 @@ ParrotRelay sits between HyperHQ and TeknoParrotUi.exe and fixes this without to
 ## What it does
 
 1. **Its own fullscreen loading screen** — shows the real game name (read from TeknoParrot's profile XML) and, optionally, a game-specific background image while the game loads. Closes automatically as soon as the real game window appears.
-2. **A progress bar that learns each game.** Every launch stores how long the game took from start until its window appeared, in the game's `.cfg` as `measured_load_ms`. The next launch predicts from it, then stores `(new time + stored time) / 2` — so the estimate settles on a realistic value and follows a changed machine on its own. The first launch of a game has nothing to predict and runs indeterminate. Any extra delay is added on top, so the bar runs out exactly when the loading screen disappears.
+2. **A progress bar that learns each game.** Every launch stores how long the game took from start until its window appeared, in the game's `.cfg` as `measured_load_ms`. The next launch predicts from it, then stores `(new time + stored time) / 2` — so the estimate settles on a realistic value and follows a changed machine on its own.
+
+   Stored load time + extra delay is the expected total; one percent of it is one step of the bar. It stops at 99% while the game window still hasn't appeared, and once it has, runs up to 100% so it arrives exactly when the loading screen closes. The first launch of a game has nothing to predict and runs indeterminate.
 3. **Actively suppresses TeknoParrot's own "Game is running" window**, before it can ever take focus.
 4. **Continuously keeps focus on the real game window** as a safety net, in case something else briefly steals the foreground.
 5. **ESC cancels a launch** — while the loading screen is up, ESC ends TeknoParrot and every process it started, instead of leaving a half-started game behind.

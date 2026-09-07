@@ -19,10 +19,15 @@ Purpose:
        every launch stores the time from starting TeknoParrot until
        the game window appeared in the game's .cfg, as
        (new time + stored time) / 2, so it settles on a realistic
-       value and follows a changed machine. The first launch of a
-       game has nothing to predict and runs indeterminate. The extra
-       delay (see below) is added on top of the stored load time, so
-       the bar runs out exactly when the loading screen disappears.
+       value and follows a changed machine.
+
+       Stored load time plus the extra delay (see below) is the
+       expected total, one percent of it is one step of the bar, and
+       the bar simply follows the clock. It stops at 99% as long as
+       the game window has not appeared, and once it has, it runs
+       from wherever it got to up to 100%, arriving exactly when the
+       loading screen closes. The first launch of a game has nothing
+       to predict and runs indeterminate.
     2. Closes a TeknoParrotUi.exe that is still running from an
        earlier launch before starting the new one - a leftover
        instance keeps its profile locked, steals the foreground or
@@ -1219,35 +1224,39 @@ def global_config_header() -> list[str]:
 
 
 def launch_progress_fraction(elapsed_ms: float, expected_load_ms: int,
-                             delay_ms: int, load_finished: bool,
+                             delay_ms: int, fraction_when_found: float | None,
                              remaining_delay_ms: float) -> float:
     """
-    How full the progress bar should be, 0..1.
+    How full the progress bar should be, quantised to whole percent -
+    the bar advances in 100 steps, one per percent.
 
-    Two phases, matching how a launch actually runs:
+    The expected total is the stored load time plus the extra delay,
+    so one percent is total/100 and the bar simply follows the clock:
 
-      1. waiting for the game window: the share of the bar that the
-         expected load time makes up, capped just short of it so it
-         never sits at "done" while nothing has appeared yet;
-      2. the extra delay afterwards: the remaining share, running out
-         exactly when the loading screen closes.
+        fraction = elapsed / (load time + delay)
 
-    Splitting it this way is what makes the bar honest when a launch
-    is slower than usual - it creeps towards the phase boundary
-    instead of finishing early and then hanging at 100%.
+    Two things the plain clock can't know are handled on top:
+
+      - while the game window has not appeared, the bar stops at 99%
+        instead of claiming to be done. A launch that takes longer
+        than usual keeps creeping towards it rather than sitting at
+        100% while nothing has happened.
+      - once the window IS there, the remaining time is known exactly
+        (it is the delay), so the bar runs from wherever it got to up
+        to 100%, arriving precisely when the loading screen closes.
+        That also covers a launch that was faster than predicted.
     """
     total_ms = expected_load_ms + delay_ms
     if total_ms <= 0:
         return 1.0
-    load_share = expected_load_ms / total_ms
 
-    if not load_finished:
-        fraction = min(elapsed_ms / expected_load_ms, 1.0) * load_share
-        return min(fraction, load_share * 0.99)
+    if fraction_when_found is None:
+        return min(int(elapsed_ms / total_ms * 100), 99) / 100
 
     if delay_ms > 0:
         delay_done = 1.0 - min(1.0, max(0.0, remaining_delay_ms) / delay_ms)
-        return load_share + delay_done * (1.0 - load_share)
+        fraction = fraction_when_found + delay_done * (1.0 - fraction_when_found)
+        return int(fraction * 100) / 100
 
     return 1.0
 
@@ -2489,19 +2498,17 @@ def main() -> None:
             splash.set_progress(None)
             return
 
-        load_finished = state["measured_load_ms"] is not None
         remaining_delay_ms = 0.0
-        if load_finished and state["splash_close_at"] is not None:
+        if state["splash_close_at"] is not None:
             remaining_delay_ms = max(
                 0.0, (state["splash_close_at"] - time.monotonic()) * 1000)
 
         fraction = launch_progress_fraction(
             elapsed_ms, expected_load_ms, splash_extra_delay_ms,
-            load_finished, remaining_delay_ms)
+            state["progress_when_found"], remaining_delay_ms)
 
         splash.set_progress(fraction)
-        if not load_finished:
-            splash.set_status(f"Loading...  {int(fraction * 100)}%")
+        splash.set_status(f"Loading...  {int(fraction * 100)}%")
 
     def cancel_launch(_event=None) -> None:
         """
@@ -2553,6 +2560,9 @@ def main() -> None:
         # Filled in the moment the game window shows up: that is the
         # load time, without the extra delay that follows it.
         "measured_load_ms": None,
+        # Where the bar stood at that moment - the delay phase runs
+        # from there to 100%.
+        "progress_when_found": None,
     }
 
     if settings["esc_cancels_launch"] and settings["splash_enabled"]:
@@ -2621,6 +2631,10 @@ def main() -> None:
             if state["measured_load_ms"] is None:
                 state["measured_load_ms"] = int(
                     (time.monotonic() - launch_started_at) * 1000)
+                if expected_load_ms:
+                    state["progress_when_found"] = launch_progress_fraction(
+                        state["measured_load_ms"], expected_load_ms,
+                        splash_extra_delay_ms, None, 0.0)
                 store_measured_load_ms(profile_name, game_name,
                                        state["measured_load_ms"])
 
