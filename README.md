@@ -13,12 +13,13 @@ ParrotRelay sits between HyperHQ and TeknoParrotUi.exe and fixes this without to
 ## What it does
 
 1. **Its own fullscreen loading screen** — shows the real game name (read from TeknoParrot's profile XML) and, optionally, a game-specific background image while the game loads. Closes automatically as soon as the real game window appears.
-2. **Actively suppresses TeknoParrot's own "Game is running" window**, before it can ever take focus.
-3. **Continuously keeps focus on the real game window** as a safety net, in case something else briefly steals the foreground.
-4. **ESC cancels a launch** — while the loading screen is up, ESC ends TeknoParrot and every process it started, instead of leaving a half-started game behind.
-5. **Closes a leftover TeknoParrot** before starting a new game — a previous instance otherwise blocks the launch or steals the foreground.
-6. **Settings window** — double-click `ParrotRelay.exe` and you get a UI to configure all of this per game, no manual file editing needed.
-7. **Stays alive until the game itself actually closes** — not just until TeknoParrot's own launcher stub exits (which it does by design shortly after launching the game). Otherwise HyperHQ would wrongly report "game closed" while the game is still running.
+2. **A progress bar that learns each game.** Every launch stores how long the game took from start until its window appeared, in the game's `.cfg` as `measured_load_ms`. The next launch predicts from it, then stores `(new time + stored time) / 2` — so the estimate settles on a realistic value and follows a changed machine on its own. The first launch of a game has nothing to predict and runs indeterminate. Any extra delay is added on top, so the bar runs out exactly when the loading screen disappears.
+3. **Actively suppresses TeknoParrot's own "Game is running" window**, before it can ever take focus.
+4. **Continuously keeps focus on the real game window** as a safety net, in case something else briefly steals the foreground.
+5. **ESC cancels a launch** — while the loading screen is up, ESC ends TeknoParrot and every process it started, instead of leaving a half-started game behind.
+6. **Closes a leftover TeknoParrot** before starting a new game — a previous instance otherwise blocks the launch or steals the foreground.
+7. **Settings window** — double-click `ParrotRelay.exe` and you get a UI to configure all of this per game, no manual file editing needed.
+8. **Stays alive until the game itself actually closes** — not just until TeknoParrot's own launcher stub exits (which it does by design shortly after launching the game). Otherwise HyperHQ would wrongly report "game closed" while the game is still running.
 
 ## Installation
 
@@ -94,6 +95,8 @@ D:\ROM\TeknoParrot\ParrotRelay\parrot_relay_log.txt
 `RelayData` holds everything that belongs to the exe — DLLs and the like — and never needs to be opened. What is left is your own: the configs and the log.
 
 An exe sitting directly next to `TeknoParrotUi.exe` (the layout of older versions) still works: `TeknoParrotUi.exe` is looked for next to the exe first, then one level up. Files written by older versions are moved to their new place automatically on the next start.
+
+`measured_load_ms` in a game's `.cfg` is written by ParrotRelay itself after every launch — the load time the progress bar predicts from. Delete the line to start measuring that game afresh.
 
 A game's `.cfg` is written the first time it is launched and contains everything detected for it plus every available setting with its explanation. Lines starting with `#` follow the global defaults; removing the `#` pins that value for this game. A pinned line always wins over the global defaults — that is the whole point of the file — and keeps winning when the defaults change later. Existing files are never overwritten.
 

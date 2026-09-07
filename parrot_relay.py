@@ -7,13 +7,22 @@ Purpose:
     command-line arguments 1:1 to TeknoParrotUi.exe (same working
     directory, so no more path issues) and:
 
-    1. Shows its own fullscreen loading screen (replacement for
+    1. Shows its own fullscreen loading screen with a progress bar (replacement for
        HyperOverlay's loading screen, which turned out to be the
        cause of the original focus problem) with the real game name
        (from the UserProfiles XML, GameNameInternal) and optionally a
        game-specific background image from the LoadingBG folder,
        while no real game window exists yet. Closes automatically
        once the game window is found.
+
+       The bar is driven by how long this game took the last times:
+       every launch stores the time from starting TeknoParrot until
+       the game window appeared in the game's .cfg, as
+       (new time + stored time) / 2, so it settles on a realistic
+       value and follows a changed machine. The first launch of a
+       game has nothing to predict and runs indeterminate. The extra
+       delay (see below) is added on top of the stored load time, so
+       the bar runs out exactly when the loading screen disappears.
     2. Closes a TeknoParrotUi.exe that is still running from an
        earlier launch before starting the new one - a leftover
        instance keeps its profile locked, steals the foreground or
@@ -667,12 +676,16 @@ class SplashScreen:
         # increasing downward.
         gap_image_to_name = 30
         gap_name_to_status = 15
+        gap_status_to_bar = 25
         name_line_h = 55   # approx line height at font size 40
         status_line_h = 30  # approx line height at font size 20
+        bar_w = max(320, min(int(screen_w * 0.35), 900))
+        bar_h = 12
 
         total_h = (
             (image_h + gap_image_to_name if image_h else 0)
             + name_line_h + gap_name_to_status + status_line_h
+            + gap_status_to_bar + bar_h
         )
         y = screen_h // 2 - total_h // 2
 
@@ -694,6 +707,24 @@ class SplashScreen:
             text="Loading...", fill="#cccccc",
             font=("Segoe UI", 20), anchor="n",
         )
+        y += status_line_h + gap_status_to_bar
+
+        # Progress bar: an outlined track with a filled part. Drawn on
+        # the same canvas rather than as a ttk widget, so it inherits
+        # the background image instead of sitting on a grey rectangle.
+        self._bar_left = screen_w // 2 - bar_w // 2
+        self._bar_right = self._bar_left + bar_w
+        self._bar_top = y
+        self._bar_bottom = y + bar_h
+        self.canvas.create_rectangle(
+            self._bar_left, self._bar_top, self._bar_right, self._bar_bottom,
+            outline="#666666", width=1,
+        )
+        self.bar_fill_id = self.canvas.create_rectangle(
+            self._bar_left, self._bar_top, self._bar_left, self._bar_bottom,
+            outline="", fill="#e0e0e0",
+        )
+        self._indeterminate_pos = 0.0
 
         self.root.update_idletasks()
         # The splash is topmost anyway; grabbing the keyboard as well is
@@ -708,6 +739,37 @@ class SplashScreen:
     def set_status(self, text: str) -> None:
         try:
             self.canvas.itemconfig(self.status_text_id, text=text)
+        except tk.TclError:
+            pass
+
+    def set_progress(self, fraction: float | None) -> None:
+        """
+        Moves the bar. A fraction of 0..1 fills it accordingly; None
+        means "no idea how long this takes" (no measured time yet) and
+        runs a block back and forth instead, so the screen still looks
+        alive without claiming a progress it cannot know.
+        """
+        if not self.visible:
+            return
+
+        try:
+            if fraction is None:
+                width = self._bar_right - self._bar_left
+                block = width * 0.2
+                self._indeterminate_pos = (self._indeterminate_pos + 0.012) % 1.0
+                # Ping-pong: 0..1..0 instead of jumping back at the end.
+                offset = self._indeterminate_pos * 2
+                if offset > 1:
+                    offset = 2 - offset
+                left = self._bar_left + offset * (width - block)
+                self.canvas.coords(self.bar_fill_id, left, self._bar_top,
+                                   left + block, self._bar_bottom)
+                return
+
+            fraction = max(0.0, min(1.0, fraction))
+            right = self._bar_left + (self._bar_right - self._bar_left) * fraction
+            self.canvas.coords(self.bar_fill_id, self._bar_left, self._bar_top,
+                               right, self._bar_bottom)
         except tk.TclError:
             pass
 
@@ -1059,7 +1121,8 @@ def format_setting_value(setting: Setting, value) -> str:
 
 
 def render_config_file(values: dict, header_lines: list[str],
-                       active_keys: set[str] | None = None) -> str:
+                       active_keys: set[str] | None = None,
+                       stats: dict | None = None) -> str:
     """
     Renders a .cfg with the header, then every setting preceded by its
     explanation. Written the same way for the global defaults and for
@@ -1088,16 +1151,33 @@ def render_config_file(values: dict, header_lines: list[str],
             line = "#" + line
         out.append(line)
 
+    if stats:
+        out.append("")
+        out.append("# " + "-" * 66)
+        out.append("# Measured values - written by ParrotRelay itself")
+        out.append("# " + "-" * 66)
+        out.append("#")
+        out.append("# measured_load_ms")
+        out.append("#   How long this game took from the launch until its")
+        out.append("#   window appeared, in milliseconds. Written after every")
+        out.append("#   launch as (new time + stored time) / 2, so it settles")
+        out.append("#   on a realistic value and follows changes to the")
+        out.append("#   machine. It drives the progress bar on the loading")
+        out.append("#   screen. Delete the line to start measuring afresh.")
+        for key, value in stats.items():
+            out.append(f"{key}={value}")
+
     return "\n".join(out) + "\n"
 
 
 def write_config_file(path: str, values: dict, header_lines: list[str],
-                      active_keys: set[str] | None = None) -> bool:
+                      active_keys: set[str] | None = None,
+                      stats: dict | None = None) -> bool:
     """Writes a .cfg, replacing an existing one. True on success."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(render_config_file(values, header_lines, active_keys))
+            f.write(render_config_file(values, header_lines, active_keys, stats))
         return True
     except OSError:
         log(f"Could not write config: {path}")
@@ -1136,6 +1216,124 @@ def global_config_header() -> list[str]:
         "itself in GameConfigs\\<profile>.cfg - a value set there always",
         "wins over the one here.",
     ]
+
+
+def launch_progress_fraction(elapsed_ms: float, expected_load_ms: int,
+                             delay_ms: int, load_finished: bool,
+                             remaining_delay_ms: float) -> float:
+    """
+    How full the progress bar should be, 0..1.
+
+    Two phases, matching how a launch actually runs:
+
+      1. waiting for the game window: the share of the bar that the
+         expected load time makes up, capped just short of it so it
+         never sits at "done" while nothing has appeared yet;
+      2. the extra delay afterwards: the remaining share, running out
+         exactly when the loading screen closes.
+
+    Splitting it this way is what makes the bar honest when a launch
+    is slower than usual - it creeps towards the phase boundary
+    instead of finishing early and then hanging at 100%.
+    """
+    total_ms = expected_load_ms + delay_ms
+    if total_ms <= 0:
+        return 1.0
+    load_share = expected_load_ms / total_ms
+
+    if not load_finished:
+        fraction = min(elapsed_ms / expected_load_ms, 1.0) * load_share
+        return min(fraction, load_share * 0.99)
+
+    if delay_ms > 0:
+        delay_done = 1.0 - min(1.0, max(0.0, remaining_delay_ms) / delay_ms)
+        return load_share + delay_done * (1.0 - load_share)
+
+    return 1.0
+
+
+MEASURED_LOAD_KEY = "measured_load_ms"
+
+# A measured load time is only believable within these bounds: below
+# that the window came from something other than the game starting,
+# above it the launch clearly went wrong (crash dialog, missing ROM)
+# and would poison the average for every following launch.
+MIN_MEASURED_LOAD_MS = 200
+MAX_MEASURED_LOAD_MS = 600_000
+
+
+def read_measured_load_ms(profile_name: str | None) -> int | None:
+    """
+    The stored load time for this game, or None if there isn't one
+    yet (first launch, or the line was deleted to start afresh).
+    """
+    path = game_config_path(profile_name)
+    if not path or not os.path.isfile(path):
+        return None
+
+    raw = read_config_file(path).get(MEASURED_LOAD_KEY)
+    if raw is None:
+        return None
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        log(f"Ignoring invalid {MEASURED_LOAD_KEY} in {os.path.basename(path)}")
+        return None
+    return value if value > 0 else None
+
+
+def pinned_setting_keys(path: str) -> set[str]:
+    """Which setting keys a game's file actually pins (non-commented)."""
+    return {key for key in read_config_file(path) if key in SETTINGS_BY_KEY}
+
+
+def store_measured_load_ms(profile_name: str | None, game_name: str,
+                           measured_ms: int) -> None:
+    """
+    Folds the time this launch took into the game's config:
+    nothing stored yet -> the measured time as-is, otherwise the
+    average of the measured and the stored one. Two launches in a row
+    therefore move the value halfway towards reality, which tracks a
+    changed machine without a single odd launch throwing it off.
+
+    The user's own settings in that file are kept exactly as they
+    are, pinned lines included.
+    """
+    path = game_config_path(profile_name)
+    if not path:
+        return
+
+    if not MIN_MEASURED_LOAD_MS <= measured_ms <= MAX_MEASURED_LOAD_MS:
+        log(f"Load time of {measured_ms} ms is outside the believable range "
+            f"({MIN_MEASURED_LOAD_MS}-{MAX_MEASURED_LOAD_MS} ms) - not stored")
+        return
+
+    stored = read_measured_load_ms(profile_name)
+    new_value = measured_ms if stored is None else (measured_ms + stored) // 2
+
+    values = {setting.key: setting.default for setting in SETTINGS}
+    active: set[str] = set()
+    if os.path.isfile(path):
+        raw_values = read_config_file(path)
+        for key, raw in raw_values.items():
+            setting = SETTINGS_BY_KEY.get(key)
+            if setting is None:
+                continue
+            parsed = parse_setting_value(setting, raw, os.path.basename(path))
+            if parsed is not None:
+                values[key] = parsed
+                active.add(key)
+
+    if write_config_file(path, values,
+                         game_config_header(profile_name or "?", game_name,
+                                            find_background_image(profile_name)),
+                         active_keys=active,
+                         stats={MEASURED_LOAD_KEY: new_value}):
+        if stored is None:
+            log(f"Load time measured: {measured_ms} ms (first one, stored as is)")
+        else:
+            log(f"Load time measured: {measured_ms} ms, stored was {stored} ms "
+                f"-> new average {new_value} ms")
 
 
 def resolve_settings(profile_name: str | None, game_name: str,
@@ -1495,7 +1693,15 @@ class SettingsWindow:
 
     def _pinned_keys(self, path: str) -> set[str]:
         """Keys a game's file actually pins (i.e. non-commented)."""
-        return {key for key in read_config_file(path) if key in SETTINGS_BY_KEY}
+        return pinned_setting_keys(path)
+
+    def _stats_of(self, profile: str | None) -> dict | None:
+        """
+        The measured values stored for a game, so saving from here
+        keeps them instead of throwing the measurement away.
+        """
+        measured = read_measured_load_ms(profile) if profile else None
+        return {MEASURED_LOAD_KEY: measured} if measured else None
 
     def _global_values(self) -> dict:
         values = {setting.key: setting.default for setting in SETTINGS}
@@ -1570,9 +1776,13 @@ class SettingsWindow:
             pinned = self._pinned_keys(path) if os.path.isfile(path) else set()
             bg = find_background_image(profile)
             self.title_var.set(name)
+            measured = read_measured_load_ms(profile)
+            measured_text = (f"{measured / 1000:.1f} s measured load time"
+                             if measured else "load time not measured yet")
             self.subtitle_var.set(
                 f"Profile {profile}.xml   -   "
                 f"{len(pinned)} of {len(SETTINGS)} settings set for this game"
+                f"   -   {measured_text}"
                 f"   -   background: {bg or 'none found'}")
             self.inherit_button.state(["!disabled"])
             self.pin_button.state(["!disabled"])
@@ -1637,7 +1847,7 @@ class SettingsWindow:
                 game_config_path(profile), values,
                 game_config_header(profile, name,
                                    find_background_image(profile)),
-                active_keys=active)
+                active_keys=active, stats=self._stats_of(profile))
             target = game_config_path(profile) or "?"
 
         if not ok:
@@ -1669,7 +1879,7 @@ class SettingsWindow:
         write_config_file(game_config_path(profile), values,
                           game_config_header(profile, name,
                                              find_background_image(profile)),
-                          active_keys=set())
+                          active_keys=set(), stats=self._stats_of(profile))
         self._refresh_game_list()
         self._load_current()
         self.status_var.set(f"\"{name}\" follows the global defaults again")
@@ -1693,7 +1903,8 @@ class SettingsWindow:
                 game_config_path(profile), values,
                 game_config_header(profile, name,
                                    find_background_image(profile)),
-                active_keys={setting.key for setting in SETTINGS}):
+                active_keys={setting.key for setting in SETTINGS},
+                stats=self._stats_of(profile)):
             return
 
         self.dirty = False
@@ -1727,7 +1938,7 @@ class SettingsWindow:
                     game_config_path(profile), values,
                     game_config_header(profile, name,
                                        find_background_image(profile)),
-                    active_keys=active):
+                    active_keys=active, stats=self._stats_of(profile)):
                 written += 1
 
         self._refresh_game_list()
@@ -2243,7 +2454,20 @@ def main() -> None:
         return
 
     tp_pid = proc.pid
+    launch_started_at = time.monotonic()
     log(f"TeknoParrotUi.exe started, PID={tp_pid}")
+
+    # What the progress bar aims at: the stored load time for this game
+    # plus the extra delay, since the bar is meant to run out exactly
+    # when the loading screen disappears. Without a stored time the bar
+    # has nothing to predict and runs indeterminate instead.
+    expected_load_ms = read_measured_load_ms(profile_name)
+    if expected_load_ms:
+        log(f"Expected load time for this game: {expected_load_ms} ms "
+            f"(+ {splash_extra_delay_ms} ms extra delay)")
+    else:
+        log("No load time measured for this game yet - the progress bar "
+            "runs indeterminate and the time is stored after this launch")
 
     splash = SplashScreen(game_name, bg_image_path,
                           visible=settings["splash_enabled"])
@@ -2253,6 +2477,31 @@ def main() -> None:
     else:
         log(f"Splash screen disabled for '{game_name}' "
             f"(profile: {profile_name or '?'}) - window handling only")
+
+    def update_progress() -> None:
+        """
+        Feeds the bar. With no measured time for this game there is
+        nothing to predict, so it runs indeterminate instead.
+        """
+        elapsed_ms = (time.monotonic() - launch_started_at) * 1000
+
+        if not expected_load_ms:
+            splash.set_progress(None)
+            return
+
+        load_finished = state["measured_load_ms"] is not None
+        remaining_delay_ms = 0.0
+        if load_finished and state["splash_close_at"] is not None:
+            remaining_delay_ms = max(
+                0.0, (state["splash_close_at"] - time.monotonic()) * 1000)
+
+        fraction = launch_progress_fraction(
+            elapsed_ms, expected_load_ms, splash_extra_delay_ms,
+            load_finished, remaining_delay_ms)
+
+        splash.set_progress(fraction)
+        if not load_finished:
+            splash.set_status(f"Loading...  {int(fraction * 100)}%")
 
     def cancel_launch(_event=None) -> None:
         """
@@ -2301,6 +2550,9 @@ def main() -> None:
         "give_up_at": (time.monotonic() + splash_timeout_ms / 1000.0
                        if splash_timeout_ms > 0 else None),
         "cancelled": False,
+        # Filled in the moment the game window shows up: that is the
+        # load time, without the extra delay that follows it.
+        "measured_load_ms": None,
     }
 
     if settings["esc_cancels_launch"] and settings["splash_enabled"]:
@@ -2366,6 +2618,12 @@ def main() -> None:
                     # the game yet - that happens once it's gone.
                     splash.keep_on_top()
 
+            if state["measured_load_ms"] is None:
+                state["measured_load_ms"] = int(
+                    (time.monotonic() - launch_started_at) * 1000)
+                store_measured_load_ms(profile_name, game_name,
+                                       state["measured_load_ms"])
+
             if state["splash_closed"] and settings["focus_guard"]:
                 if win32gui.GetForegroundWindow() != hwnd:
                     if hwnd != state["last_focused_hwnd"]:
@@ -2405,6 +2663,9 @@ def main() -> None:
                     f"exited - proxy shutting down.")
                 splash.root.quit()
                 return
+
+        if not state["splash_closed"]:
+            update_progress()
 
         # Schedule the next tick (milliseconds).
         splash.root.after(int(POLL_INTERVAL * 1000), tick)
