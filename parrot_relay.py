@@ -1294,6 +1294,7 @@ def render_config_file(values: dict, header_lines: list[str],
         out.append("#   on a realistic value and follows changes to the")
         out.append("#   machine. It drives the progress bar on the loading")
         out.append("#   screen. Delete the line to start measuring afresh.")
+        out.append("#   measured_with records the version that measured it.")
         for key, value in stats.items():
             out.append(f"{key}={value}")
 
@@ -1387,6 +1388,22 @@ def launch_progress_fraction(elapsed_ms: float, expected_load_ms: int,
 
 
 MEASURED_LOAD_KEY = "measured_load_ms"
+MEASURED_WITH_KEY = "measured_with"
+
+# Before this version, a loader's console or a proxy window could pass
+# as the game window, so the times measured then are far too short -
+# House of the Dead measured 1.5 s that way. Such a measurement is
+# dropped instead of being averaged with correct ones for launches.
+FIRST_TRUSTWORTHY_MEASUREMENT_VERSION = (1, 6, 0)
+
+
+def _version_tuple(text: str) -> tuple[int, ...] | None:
+    """
+    "1.6.0" -> (1, 6, 0). Trailing labels such as "-dev" are ignored,
+    and anything unparseable comes back as None.
+    """
+    parts = re.findall(r"\d+", text or "")[:3]
+    return tuple(int(part) for part in parts) if parts else None
 
 # A measured load time is only believable within these bounds: below
 # that the window came from something other than the game starting,
@@ -1405,7 +1422,8 @@ def read_measured_load_ms(profile_name: str | None) -> int | None:
     if not path or not os.path.isfile(path):
         return None
 
-    raw = read_config_file(path).get(MEASURED_LOAD_KEY)
+    values = read_config_file(path)
+    raw = values.get(MEASURED_LOAD_KEY)
     if raw is None:
         return None
     try:
@@ -1413,7 +1431,21 @@ def read_measured_load_ms(profile_name: str | None) -> int | None:
     except (TypeError, ValueError):
         log(f"Ignoring invalid {MEASURED_LOAD_KEY} in {os.path.basename(path)}")
         return None
-    return value if value > 0 else None
+    if value <= 0:
+        return None
+
+    # A build always trusts its own measurements - that keeps a
+    # development build (0.0.0-dev) from re-measuring every launch.
+    recorded = values.get(MEASURED_WITH_KEY, "")
+    measured_with = _version_tuple(recorded)
+    if recorded.strip() != VERSION and (
+            measured_with is None or
+            measured_with < FIRST_TRUSTWORTHY_MEASUREMENT_VERSION):
+        log(f"Load time in {os.path.basename(path)} was measured by an older "
+            f"version, when a loader's window could pass as the game - "
+            f"measuring afresh")
+        return None
+    return value
 
 
 def pinned_setting_keys(path: str) -> set[str]:
@@ -1462,7 +1494,8 @@ def store_measured_load_ms(profile_name: str | None, game_name: str,
                          game_config_header(profile_name or "?", game_name,
                                             find_background_image(profile_name)),
                          active_keys=active,
-                         stats={MEASURED_LOAD_KEY: new_value}):
+                         stats={MEASURED_LOAD_KEY: new_value,
+                                MEASURED_WITH_KEY: VERSION}):
         if stored is None:
             log(f"Load time measured: {measured_ms} ms (first one, stored as is)")
         else:
@@ -1936,7 +1969,8 @@ class SettingsWindow:
         keeps them instead of throwing the measurement away.
         """
         measured = read_measured_load_ms(profile) if profile else None
-        return {MEASURED_LOAD_KEY: measured} if measured else None
+        return ({MEASURED_LOAD_KEY: measured, MEASURED_WITH_KEY: VERSION}
+                if measured else None)
 
     def _global_values(self) -> dict:
         values = {setting.key: setting.default for setting in SETTINGS}
@@ -2470,7 +2504,11 @@ def find_windows_of_pids(pids: set[int]) -> list[int]:
 # closes the loading screen too early, measures a load time that is
 # far too short, and ties ParrotRelay's lifetime to a window that is
 # about to disappear.
-TRANSITIONAL_WINDOW_CLASSES = {"d3dproxywindow", "consolewindowclass"}
+TRANSITIONAL_WINDOW_CLASSES = {
+    "d3dproxywindow",       # TeknoParrot's DirectX proxy while hooking
+    "consolewindowclass",   # console of loaders like OpenParrotLoader64
+    "splashscreenclass",    # Unreal Engine's own splash before the game
+}
 
 # Logged once per window, not once per tick.
 _transitional_logged: set[int] = set()
