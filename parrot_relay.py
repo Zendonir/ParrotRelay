@@ -176,7 +176,7 @@ except ImportError:
 # Version of this build. The "Build new Release" workflow rewrites
 # this line when it cuts a release, so the number in the GUI, in the
 # log and on the release tag are always the same one.
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 # ---------------------------------------------------------------------
 # Paths
