@@ -118,50 +118,7 @@ A game's `.cfg` is written the first time that game is launched. It contains wha
 
 ## Requirements
 
-The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** must be installed on the machine.
-
-ParrotRelay deliberately does **not** ship its own copies of `VCRUNTIME140.dll`, `MSVCP140.dll` and friends. An emulator started underneath it could otherwise end up loading ParrotRelay's copy instead of the properly installed one — RPCS3 refuses to run in that case:
-
-> The module vcruntime140.dll was incorrectly installed at '...\RelayData\VCRUNTIME140.dll'
-
-With the redistributable installed, every program — ParrotRelay, RPCS3, any other emulator — uses the one copy in `System32` and the question never comes up. ParrotRelay writes a warning into its log and shows one in the settings window if it is missing.
-
-## Building from source
-
-```bash
-pip install -r requirements.txt
-pyinstaller ParrotRelay.spec
-```
-
-This produces `dist\ParrotRelay\` containing `ParrotRelay.exe` plus its `RelayData` folder. Copy the whole `ParrotRelay` folder into the TeknoParrot folder:
-
-```
-D:\ROM\TeknoParrot\TeknoParrotUi.exe
-D:\ROM\TeknoParrot\ParrotRelay\ParrotRelay.exe
-D:\ROM\TeknoParrot\ParrotRelay\RelayData\   <- runtime files
-```
-
-The runtime files stay where they are and are used directly on every launch — nothing is ever unpacked into `%TEMP%`, startup is faster, and no temp folder can be left behind.
-
-### Automated builds
-
-Two [GitHub Actions workflows](.github/workflows) build on a Windows runner (PyInstaller cannot cross-compile) and pack the complete output into one zip containing `ParrotRelay.exe`, its `RelayData` folder, `README.md` and `LICENSE` — unpack it straight into the TeknoParrot folder.
-
-**Build** runs on every push and pull request and attaches `ParrotRelay-<commit>.zip` to the workflow run (Actions tab &rarr; run &rarr; *Artifacts*). It never creates a release.
-
-**Build new Release** cuts a release on demand: Actions tab &rarr; *Build new Release* &rarr; *Run workflow*. Pick how to bump the version (`patch`/`minor`/`major`, or type an exact one like `1.5.0`) and it does the rest:
-
-1. works out the next version from the highest existing `v*` tag
-2. writes it into `parrot_relay.py`, so the number shows up in the settings window, in the log and in every config file the tool writes
-3. builds and zips
-4. commits the version bump, creates the tag `v<version>` and pushes both
-5. publishes the release with `ParrotRelay-v<version>.zip` attached and auto-generated notes
-
-Tick *prerelease* to mark it as one. The version bump commit carries `[skip ci]`, so it does not trigger a second CI build.
-
-### One-file build
-
-Set `ONEFILE = True` at the top of `ParrotRelay.spec` for a single `dist\ParrotRelay.exe`. Note that a one-file build unpacks its whole runtime into a fresh folder on **every** launch and deletes it afterwards — existing files are never reused, that is how PyInstaller's one-file mode works. `RUNTIME_TMPDIR` in the spec can at least move that unpack folder out of `%TEMP%` and next to the exe (absolute path required). ParrotRelay cleans up `_MEI*` leftovers there on the next start.
+The **[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)** must be installed — ParrotRelay uses the machine's runtime rather than shipping its own copies, so that an emulator started underneath it can never load the wrong one. If it is missing, ParrotRelay says so in its log and in the settings window.
 
 ## Logging
 
