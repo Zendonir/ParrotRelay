@@ -4,7 +4,7 @@ A transparent launch proxy for [TeknoParrot](https://github.com/teknogods/TeknoP
 
 It sits between HyperHQ and `TeknoParrotUi.exe`, forwards the command line unchanged, and takes care of everything that makes a TeknoParrot game look unpolished on a cabinet: the loading screen, the focus, and the cleanup afterwards.
 
-![ParrotRelay loading screen](screenshot.png)
+![ParrotRelay loading screen](loading-screen.png)
 
 ## Why
 
