@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 r"""
 PyInstaller build recipe for ParrotRelay.
 
@@ -47,6 +48,21 @@ RUNTIME_TMPDIR = None
 # GameConfigs and the log.
 CONTENTS_DIRECTORY = "RelayData"
 
+# DLLs of the Microsoft Visual C++ runtime. PyInstaller bundles its
+# own copies, and an emulator started underneath ParrotRelay can end
+# up loading OUR copy instead of the properly installed one - RPCS3
+# then refuses to run with "The module vcruntime140.dll was
+# incorrectly installed at ...". Rather than trying to hide the files
+# from every possible DLL search, they are simply not shipped: the
+# machine's own installation is used, exactly as for every other
+# program. This makes the Visual C++ 2015-2022 Redistributable a
+# requirement - which RPCS3 and most emulators have anyway.
+VC_RUNTIME_DLLS = {
+    "vcruntime140.dll", "vcruntime140_1.dll",
+    "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_codecvt_ids.dll",
+    "concrt140.dll",
+}
+
 a = Analysis(
     ["parrot_relay.py"],
     pathex=[],
@@ -60,6 +76,13 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+
+excluded = [entry for entry in a.binaries
+            if os.path.basename(entry[0]).lower() in VC_RUNTIME_DLLS]
+for entry in excluded:
+    print(f"ParrotRelay.spec: not shipping {entry[0]} "
+          f"(using the system's Visual C++ runtime instead)")
+a.binaries = [entry for entry in a.binaries if entry not in excluded]
 
 pyz = PYZ(a.pure)
 

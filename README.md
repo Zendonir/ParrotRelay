@@ -103,6 +103,8 @@ Without it, programs pick up whatever `VCRUNTIME140.dll` they can find. RPCS3 in
 
 If you see that, install the redistributable — that is the fix. ParrotRelay writes a warning line into its log and shows one in the settings window when the redistributable is missing.
 
+ParrotRelay deliberately does **not** ship its own copies of those DLLs (`VCRUNTIME140.dll`, `MSVCP140.dll` and friends). Otherwise an emulator started underneath it can end up loading ParrotRelay's copy instead of the properly installed one, which is exactly what RPCS3 refuses to do.
+
 ## Building from source
 
 ```bash
